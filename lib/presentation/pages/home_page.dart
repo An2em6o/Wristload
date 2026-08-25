@@ -669,6 +669,10 @@ class HomePage extends StatelessWidget {
     if (saved != null) {
       return controller.connectAdditionalSavedDevice(binding);
     }
+    if (Platform.isWindows) {
+      controller.reportError('Windows 多设备连接仅支持已有 authkey 的已保存设备。');
+      return false;
+    }
     final authKey = await _requestAdditionalDeviceAuthKey(
       context,
       title: '输入附加设备 authkey',
@@ -678,6 +682,66 @@ class HomePage extends StatelessWidget {
     return controller.connectAdditionalSavedDevice(
       binding,
       authKeyOverride: authKey,
+    );
+  }
+
+  Future<void> _showWindowsMultiDeviceDialog(BuildContext context) async {
+    final candidates = <AuthKeyBinding>[];
+    for (final binding in controller.authKeyBindings) {
+      if (controller.isDeviceAlreadyInSession(binding.id)) continue;
+      if (await controller.readAuthKeyFor(binding.id) != null) {
+        candidates.add(binding);
+      }
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('多设备连接'),
+        content: SizedBox(
+          width: 480,
+          child: candidates.isEmpty
+              ? const Text('没有可连接的第二台设备。请先确保设备已在 Windows 中配对，并已保存 authkey。')
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: candidates.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final binding = candidates[index];
+                    return ListTile(
+                      leading: const Icon(Icons.watch_outlined),
+                      title: Text(
+                        binding.name.trim().isEmpty ? '已保存设备' : binding.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        binding.id,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontFamily: 'monospace'),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.of(dialogContext).pop();
+                        unawaited(
+                          _connectAdditionalSavedDeviceWithAuthKey(
+                            context,
+                            binding,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -805,6 +869,8 @@ class HomePage extends StatelessWidget {
         .where((binding) => !controller.isDeviceAlreadyInSession(binding.id))
         .toList(growable: false);
     final primaryDeviceId = device?.uuid.toString();
+    final multiDeviceMode =
+        connected && primaryDeviceId != null && additionalSessions.isNotEmpty;
     final content = SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -813,241 +879,286 @@ class HomePage extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              connected
-                                  ? '已连接：${candidateName.isEmpty ? '未知设备' : candidateName}'
-                                  : connecting
-                                  ? '正在连接：${candidateName.isEmpty ? '设备' : candidateName}'
-                                  : disconnecting
-                                  ? '正在断开连接…'
-                                  : '尚未连接设备',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleLarge,
-                            ),
-                          ),
-                          if (canOpenDeviceInfo)
-                            IconButton(
-                              key: const ValueKey('device-info-button'),
-                              tooltip: '查看设备信息',
-                              style: IconButton.styleFrom(
-                                side: BorderSide(color: colors.outlineVariant),
-                              ),
-                              icon: const Icon(Icons.chevron_right),
-                              onPressed: () => unawaited(
-                                openVerifiedDeviceInfo(context, controller),
-                              ),
-                            ),
-                        ],
+              if (multiDeviceMode)
+                _MultiDeviceSessionPanel(
+                  primarySession: DeviceSessionView(
+                    id: primaryDeviceId,
+                    name: candidateName.isEmpty ? '已连接设备' : candidateName,
+                    controller: controller,
+                    isPrimary: true,
+                  ),
+                  additionalSessions: additionalSessions,
+                  targetPolicy: controller.resourceInstallTargetPolicy,
+                  onSetTarget: (deviceId) =>
+                      controller.setResourceInstallTargetPolicy(
+                        ResourceInstallTargetPolicy(
+                          mode: ResourceInstallTargetMode.automaticDevice,
+                          automaticDeviceId: deviceId,
+                        ),
                       ),
-                      if (connected) ...[
-                        const SizedBox(height: 10),
+                  onReconnectPrimary: controller.reconnect,
+                  onDisconnectPrimary: controller.disconnect,
+                  onReconnectAdditional: (session) =>
+                      _reconnectAdditionalDeviceWithAuthKey(context, session),
+                  onDisconnectAdditional: (session) =>
+                      controller.disconnectAdditionalDevice(session.id),
+                )
+              else
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Row(
                           children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: colors.tertiary,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text('已连接', style: theme.textTheme.bodyMedium),
-                            const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                device?.uuid.toString() ?? '设备身份读取中',
+                                connected
+                                    ? '已连接：${candidateName.isEmpty ? '未知设备' : candidateName}'
+                                    : connecting
+                                    ? '正在连接：${candidateName.isEmpty ? '设备' : candidateName}'
+                                    : disconnecting
+                                    ? '正在断开连接…'
+                                    : '尚未连接设备',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.end,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: colors.onSurfaceVariant,
-                                  fontFamily: 'monospace',
-                                ),
+                                style: theme.textTheme.titleLarge,
                               ),
                             ),
-                          ],
-                        ),
-                      ],
-                      if (connected && (hasBattery || hasStorage)) ...[
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            if (hasBattery)
-                              Expanded(
-                                child: _DeviceStat(
-                                  icon: Icons.battery_std,
-                                  value: '$battery%',
-                                  detail: '电量',
-                                  progress: battery / 100,
-                                  progressColor: battery < 20
-                                      ? colors.error
-                                      : null,
+                            if (canOpenDeviceInfo)
+                              IconButton(
+                                key: const ValueKey('device-info-button'),
+                                tooltip: '查看设备信息',
+                                style: IconButton.styleFrom(
+                                  side: BorderSide(
+                                    color: colors.outlineVariant,
+                                  ),
                                 ),
-                              ),
-                            if (hasBattery && hasStorage)
-                              const SizedBox(width: 12),
-                            if (hasStorage)
-                              Expanded(
-                                child: _DeviceStat(
-                                  icon: Icons.sd_storage,
-                                  value:
-                                      '${_formatBytes(storageUsed)} / ${_formatBytes(storageTotal)}',
-                                  detail: '存储',
-                                  progress: storageUsed / storageTotal,
+                                icon: const Icon(Icons.chevron_right),
+                                onPressed: () => unawaited(
+                                  openVerifiedDeviceInfo(context, controller),
                                 ),
                               ),
                           ],
                         ),
-                      ],
-                      const SizedBox(height: 12),
-                      if (!connected && controller.bluetoothUnavailable) ...[
-                        _BluetoothUnavailableBanner(
-                          message: controller.bluetoothStateMessage,
-                          onOpenBluetoothPrivacySettings:
-                              Platform.isMacOS &&
-                                  controller
-                                      .macOSBluetoothPrivacySettingsRequired
-                              ? () => unawaited(
-                                  controller
-                                      .openMacOSBluetoothPrivacySettings(),
-                                )
-                              : null,
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      if (!connected)
-                        if (connecting || disconnecting)
+                        if (connected) ...[
+                          const SizedBox(height: 10),
                           Row(
                             children: [
-                              const SizedBox.square(
-                                dimension: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: colors.tertiary,
+                                  shape: BoxShape.circle,
                                 ),
                               ),
-                              const SizedBox(width: 10),
+                              const SizedBox(width: 6),
+                              Text('已连接', style: theme.textTheme.bodyMedium),
+                              const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
-                                  connecting
-                                      ? '正在建立设备连接，完成验证后即可使用设备功能。'
-                                      : '正在释放蓝牙连接，请稍候。',
-                                  style: theme.textTheme.bodyMedium,
+                                  device?.uuid.toString() ?? '设备身份读取中',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.end,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                    fontFamily: 'monospace',
+                                  ),
                                 ),
                               ),
                             ],
-                          )
-                        else if (controller.isScanning)
+                          ),
+                        ],
+                        if (connected && (hasBattery || hasStorage)) ...[
+                          const SizedBox(height: 12),
                           Row(
                             children: [
-                              const ScanningPulseIndicator(),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '正在扫描附近的设备…',
-                                      style: theme.textTheme.bodyMedium,
-                                    ),
-                                    Text(
-                                      '找到 ${controller.scanResults.where(isInstallableDiscovery).length} 个可安装设备',
-                                      style: theme.textTheme.bodySmall
-                                          ?.copyWith(
-                                            color: colors.onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ],
+                              if (hasBattery)
+                                Expanded(
+                                  child: _DeviceStat(
+                                    icon: Icons.battery_std,
+                                    value: '$battery%',
+                                    detail: '电量',
+                                    progress: battery / 100,
+                                    progressColor: battery < 20
+                                        ? colors.error
+                                        : null,
+                                  ),
+                                ),
+                              if (hasBattery && hasStorage)
+                                const SizedBox(width: 12),
+                              if (hasStorage)
+                                Expanded(
+                                  child: _DeviceStat(
+                                    icon: Icons.sd_storage,
+                                    value:
+                                        '${_formatBytes(storageUsed)} / ${_formatBytes(storageTotal)}',
+                                    detail: '存储',
+                                    progress: storageUsed / storageTotal,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        if (!connected && controller.bluetoothUnavailable) ...[
+                          _BluetoothUnavailableBanner(
+                            message: controller.bluetoothStateMessage,
+                            onOpenBluetoothPrivacySettings:
+                                Platform.isMacOS &&
+                                    controller
+                                        .macOSBluetoothPrivacySettingsRequired
+                                ? () => unawaited(
+                                    controller
+                                        .openMacOSBluetoothPrivacySettings(),
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (!connected)
+                          if (connecting || disconnecting)
+                            Row(
+                              children: [
+                                const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    connecting ? '正在连接…' : '正在断开…',
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                ),
+                              ],
+                            )
+                          else if (controller.isScanning)
+                            Row(
+                              children: [
+                                const ScanningPulseIndicator(),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '正在扫描附近的设备…',
+                                        style: theme.textTheme.bodyMedium,
+                                      ),
+                                      Text(
+                                        '找到 ${controller.scanResults.where(isInstallableDiscovery).length} 个可安装设备',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: colors.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                OutlinedButton.icon(
+                                  onPressed: controller.stopScan,
+                                  icon: const Icon(Icons.stop_circle_outlined),
+                                  label: const Text('停止扫描'),
+                                ),
+                              ],
+                            )
+                          else
+                            FilledButton.icon(
+                              onPressed:
+                                  controller.canScan &&
+                                      !controller.isConnectionBusy
+                                  ? controller.beginScan
+                                  : null,
+                              icon: const Icon(Icons.bluetooth_searching),
+                              label: const Text('开始扫描'),
+                            )
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              FilledButton.icon(
+                                onPressed: controller.isConnectionBusy
+                                    ? null
+                                    : controller.reconnect,
+                                icon: controller.isConnectionBusy
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.refresh),
+                                label: Text(
+                                  controller.isConnectionBusy ? '正在连接' : '重新连接',
                                 ),
                               ),
-                              const SizedBox(width: 12),
                               OutlinedButton.icon(
-                                onPressed: controller.stopScan,
-                                icon: const Icon(Icons.stop_circle_outlined),
-                                label: const Text('停止扫描'),
+                                key: const ValueKey('disconnect-button'),
+                                onPressed: controller.isConnectionBusy
+                                    ? null
+                                    : controller.disconnect,
+                                icon: const Icon(Icons.link_off),
+                                label: const Text('断开连接'),
                               ),
+                              if (Platform.isWindows &&
+                                  controller.supportsAdditionalWindowsDevices)
+                                FilledButton.tonalIcon(
+                                  key: const ValueKey(
+                                    'connect-additional-windows-device-button',
+                                  ),
+                                  onPressed:
+                                      controller
+                                              .canConnectAdditionalDesktopDevice &&
+                                          !controller.isConnectionBusy
+                                      ? () => unawaited(
+                                          _showWindowsMultiDeviceDialog(
+                                            context,
+                                          ),
+                                        )
+                                      : null,
+                                  icon: const Icon(Icons.add_link),
+                                  label: const Text('多设备连接'),
+                                ),
+                              if (Platform.isMacOS &&
+                                  controller.supportsAdditionalMacOSDevices)
+                                controller.isScanning
+                                    ? OutlinedButton.icon(
+                                        key: const ValueKey(
+                                          'stop-additional-device-scan-button',
+                                        ),
+                                        onPressed: controller.stopScan,
+                                        icon: const Icon(
+                                          Icons.stop_circle_outlined,
+                                        ),
+                                        label: const Text('停止添加设备扫描'),
+                                      )
+                                    : FilledButton.tonalIcon(
+                                        key: const ValueKey(
+                                          'connect-additional-device-button',
+                                        ),
+                                        onPressed:
+                                            controller.canScan &&
+                                                !controller.isConnectionBusy
+                                            ? controller.beginScan
+                                            : null,
+                                        icon: const Icon(Icons.add_link),
+                                        label: const Text('连接多设备'),
+                                      ),
                             ],
-                          )
-                        else
-                          FilledButton.icon(
-                            onPressed:
-                                controller.canScan &&
-                                    !controller.isConnectionBusy
-                                ? controller.beginScan
-                                : null,
-                            icon: const Icon(Icons.bluetooth_searching),
-                            label: const Text('开始扫描'),
-                          )
-                      else
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            FilledButton.icon(
-                              onPressed: controller.isConnectionBusy
-                                  ? null
-                                  : controller.reconnect,
-                              icon: controller.isConnectionBusy
-                                  ? const SizedBox.square(
-                                      dimension: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.refresh),
-                              label: Text(
-                                controller.isConnectionBusy ? '正在连接' : '重新连接',
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              key: const ValueKey('disconnect-button'),
-                              onPressed: controller.isConnectionBusy
-                                  ? null
-                                  : controller.disconnect,
-                              icon: const Icon(Icons.link_off),
-                              label: const Text('断开连接'),
-                            ),
-                            if (Platform.isMacOS &&
-                                controller.supportsAdditionalMacOSDevices)
-                              controller.isScanning
-                                  ? OutlinedButton.icon(
-                                      key: const ValueKey(
-                                        'stop-additional-device-scan-button',
-                                      ),
-                                      onPressed: controller.stopScan,
-                                      icon: const Icon(
-                                        Icons.stop_circle_outlined,
-                                      ),
-                                      label: const Text('停止添加设备扫描'),
-                                    )
-                                  : FilledButton.tonalIcon(
-                                      key: const ValueKey(
-                                        'connect-additional-device-button',
-                                      ),
-                                      onPressed:
-                                          controller.canScan &&
-                                              !controller.isConnectionBusy
-                                          ? controller.beginScan
-                                          : null,
-                                      icon: const Icon(Icons.add_link),
-                                      label: const Text('连接多设备'),
-                                    ),
-                          ],
-                        ),
-                    ],
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
               if (controller.error case final error?)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -1102,7 +1213,6 @@ class HomePage extends StatelessWidget {
               if (connected) ...[
                 const SizedBox(height: 12),
                 Text('安装', style: Theme.of(context).textTheme.titleMedium),
-                const Text('完成设备验证后，可连续安装多个文件。'),
                 const SizedBox(height: 8),
                 InstallSplitButton(
                   preferredTarget: preferredInstallTarget,
@@ -1114,7 +1224,9 @@ class HomePage extends StatelessWidget {
                   onInstall: (target) => _pickAndTry(
                     context,
                     target,
-                    targetDeviceIds: primaryDeviceId == null
+                    targetDeviceIds: multiDeviceMode
+                        ? null
+                        : primaryDeviceId == null
                         ? null
                         : <String>[primaryDeviceId],
                   ),
@@ -1127,23 +1239,6 @@ class HomePage extends StatelessWidget {
                     onRetry: controller.retryInstall,
                     onClear: controller.clearLatestTask,
                   ),
-              ],
-              for (final session in additionalSessions) ...[
-                const SizedBox(height: 12),
-                _AdditionalDeviceSessionSection(
-                  session: session,
-                  preferredInstallTarget: preferredInstallTarget,
-                  onInstall: (target) => _pickAndTry(
-                    context,
-                    target,
-                    targetDeviceIds: <String>[session.id],
-                  ),
-                  onInstallFirmware: () => _pickFirmware(context),
-                  onReconnect: () =>
-                      _reconnectAdditionalDeviceWithAuthKey(context, session),
-                  onDisconnect: () =>
-                      controller.disconnectAdditionalDevice(session.id),
-                ),
               ],
               const SizedBox(height: 12),
               DiagnosticLogToggle(
@@ -1199,7 +1294,7 @@ class _SavedDevicesSection extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
             child: Row(
               children: [
-                Icon(Icons.history, size: 20, color: colors.primary),
+                Icon(Icons.history, size: 20, color: colors.onSurface),
                 const SizedBox(width: 8),
                 Text('已保存设备', style: theme.textTheme.titleMedium),
                 const Spacer(),
@@ -1288,20 +1383,97 @@ class _AdditionalDeviceScanResults extends StatelessWidget {
   }
 }
 
-class _AdditionalDeviceSessionSection extends StatelessWidget {
-  const _AdditionalDeviceSessionSection({
+class _MultiDeviceSessionPanel extends StatelessWidget {
+  const _MultiDeviceSessionPanel({
+    required this.primarySession,
+    required this.additionalSessions,
+    required this.targetPolicy,
+    required this.onSetTarget,
+    required this.onReconnectPrimary,
+    required this.onDisconnectPrimary,
+    required this.onReconnectAdditional,
+    required this.onDisconnectAdditional,
+  });
+
+  final DeviceSessionView primarySession;
+  final List<DeviceSessionView> additionalSessions;
+  final ResourceInstallTargetPolicy targetPolicy;
+  final ValueChanged<String> onSetTarget;
+  final Future<void> Function() onReconnectPrimary;
+  final Future<void> Function() onDisconnectPrimary;
+  final Future<void> Function(DeviceSessionView session) onReconnectAdditional;
+  final Future<void> Function(DeviceSessionView session) onDisconnectAdditional;
+
+  bool _isTarget(String deviceId) =>
+      targetPolicy.mode == ResourceInstallTargetMode.automaticDevice &&
+      targetPolicy.automaticDeviceId == deviceId;
+
+  @override
+  Widget build(BuildContext context) {
+    final sessions = <DeviceSessionView>[primarySession, ...additionalSessions];
+    return Card(
+      key: const ValueKey('multi-device-session-panel'),
+      clipBehavior: Clip.antiAlias,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final horizontal =
+              sessions.length == 2 && constraints.maxWidth >= 720;
+          final cards = <Widget>[
+            for (final session in sessions)
+              _MultiDeviceCard(
+                key: ValueKey('multi-device-card-${session.id}'),
+                session: session,
+                selectedTarget: _isTarget(session.id),
+                onSetTarget: () => onSetTarget(session.id),
+                onReconnect: session.isPrimary
+                    ? onReconnectPrimary
+                    : () => onReconnectAdditional(session),
+                onDisconnect: session.isPrimary
+                    ? onDisconnectPrimary
+                    : () => onDisconnectAdditional(session),
+              ),
+          ];
+          if (!horizontal) {
+            return Column(
+              children: [
+                for (var index = 0; index < cards.length; index++) ...[
+                  cards[index],
+                  if (index != cards.length - 1) const Divider(height: 1),
+                ],
+              ],
+            );
+          }
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var index = 0; index < cards.length; index++) ...[
+                  Expanded(child: cards[index]),
+                  if (index != cards.length - 1)
+                    const VerticalDivider(width: 1),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _MultiDeviceCard extends StatelessWidget {
+  const _MultiDeviceCard({
     required this.session,
-    required this.preferredInstallTarget,
-    required this.onInstall,
-    required this.onInstallFirmware,
+    required this.selectedTarget,
+    required this.onSetTarget,
     required this.onReconnect,
     required this.onDisconnect,
+    super.key,
   });
 
   final DeviceSessionView session;
-  final InstallPreference preferredInstallTarget;
-  final Future<void> Function(InstallKind target) onInstall;
-  final Future<void> Function() onInstallFirmware;
+  final bool selectedTarget;
+  final VoidCallback onSetTarget;
   final Future<void> Function() onReconnect;
   final Future<void> Function() onDisconnect;
 
@@ -1313,26 +1485,19 @@ class _AdditionalDeviceSessionSection extends StatelessWidget {
     final connected = controller.isConnected;
     final connecting = !connected && controller.isConnecting;
     final busy = controller.isConnectionBusy;
-    final name = session.name.trim().isEmpty ? '附加设备' : session.name.trim();
+    final name = session.name.trim().isEmpty ? '已连接设备' : session.name.trim();
     final status = connected
         ? '已连接'
         : connecting
         ? '正在连接'
         : busy
-        ? '正在释放连接'
-        : '连接失败，可重试';
+        ? '正在断开'
+        : '连接失败';
     final statusColor = connected
         ? colors.tertiary
         : connecting || busy
         ? colors.primary
         : colors.error;
-    final installEnabled =
-        connected &&
-        controller.sessionReady &&
-        !controller.installInProgress &&
-        !controller.timeSyncInProgress &&
-        !controller.statusRefreshInProgress;
-    final canOpenDeviceInfo = DeviceInfoPage.hasVerifiedSession(controller);
     final battery = controller.batteryPercent;
     final hasBattery = battery != null && battery >= 0 && battery <= 100;
     final storageUsed = controller.storageUsedBytes;
@@ -1342,174 +1507,215 @@ class _AdditionalDeviceSessionSection extends StatelessWidget {
         storageTotal != null &&
         storageTotal > 0 &&
         storageUsed <= storageTotal;
+    final canOpenDeviceInfo = DeviceInfoPage.hasVerifiedSession(controller);
 
-    return Column(
-      key: ValueKey('additional-device-session-' + session.id),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: selectedTarget
+                      ? colors.primaryContainer
+                      : colors.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  connected ? Icons.watch : Icons.bluetooth,
+                  color: selectedTarget
+                      ? colors.onPrimaryContainer
+                      : colors.onSurface,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      session.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (canOpenDeviceInfo)
+                IconButton(
+                  key: ValueKey('multi-device-info-${session.id}'),
+                  tooltip: '查看设备信息',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: () =>
+                      unawaited(openVerifiedDeviceInfo(context, controller)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: statusColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Text(status, style: theme.textTheme.bodySmall),
+            ],
+          ),
+          if (connected && (hasBattery || hasStorage)) ...[
+            const SizedBox(height: 12),
+            Row(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: colors.secondaryContainer,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        connected ? Icons.watch : Icons.bluetooth,
-                        color: colors.onSecondaryContainer,
-                      ),
+                if (hasBattery)
+                  Expanded(
+                    child: _DeviceStat(
+                      icon: Icons.battery_std,
+                      value: '$battery%',
+                      detail: '电量',
+                      progress: battery / 100,
+                      progressColor: battery < 20 ? colors.error : null,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            session.id,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: statusColor,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              status,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (canOpenDeviceInfo)
-                      IconButton(
-                        key: ValueKey('additional-device-info-' + session.id),
-                        tooltip: '查看设备信息',
-                        visualDensity: VisualDensity.compact,
-                        icon: const Icon(Icons.chevron_right),
-                        onPressed: () => unawaited(
-                          openVerifiedDeviceInfo(context, controller),
-                        ),
-                      ),
-                  ],
-                ),
-                if (connected && (hasBattery || hasStorage)) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      if (hasBattery)
-                        Expanded(
-                          child: _DeviceStat(
-                            icon: Icons.battery_std,
-                            value: battery.toString() + '%',
-                            detail: '电量',
-                            progress: battery / 100,
-                            progressColor: battery < 20 ? colors.error : null,
-                          ),
-                        ),
-                      if (hasBattery && hasStorage) const SizedBox(width: 12),
-                      if (hasStorage)
-                        Expanded(
-                          child: _DeviceStat(
-                            icon: Icons.sd_storage,
-                            value:
-                                _formatBytes(storageUsed) +
-                                ' / ' +
-                                _formatBytes(storageTotal),
-                            detail: '存储',
-                            progress: storageUsed / storageTotal,
-                          ),
-                        ),
-                    ],
                   ),
-                ],
-                if (controller.error case final error?) ...[
-                  const SizedBox(height: 10),
-                  Text(error, style: TextStyle(color: colors.error)),
-                ],
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.icon(
-                      key: ValueKey('reconnect-additional-' + session.id),
-                      onPressed: busy ? null : () => unawaited(onReconnect()),
-                      icon: busy
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh),
-                      label: Text(connecting ? '正在连接' : '重新连接'),
+                if (hasBattery && hasStorage) const SizedBox(width: 10),
+                if (hasStorage)
+                  Expanded(
+                    child: _DeviceStat(
+                      icon: Icons.sd_storage,
+                      value:
+                          '${_formatBytes(storageUsed)} / ${_formatBytes(storageTotal)}',
+                      detail: '存储',
+                      progress: storageUsed / storageTotal,
                     ),
-                    OutlinedButton.icon(
-                      key: ValueKey('disconnect-additional-' + session.id),
-                      onPressed: () => unawaited(onDisconnect()),
-                      icon: const Icon(Icons.link_off),
-                      label: const Text('断开设备'),
-                    ),
-                  ],
-                ),
+                  ),
               ],
             ),
-          ),
-        ),
-        if (connected) ...[
-          const SizedBox(height: 10),
-          Text('安装到 ' + name, style: theme.textTheme.titleMedium),
-          const Text('此安装入口只操作当前设备。'),
-          const SizedBox(height: 8),
-          InstallSplitButton(
-            preferredTarget: preferredInstallTarget,
-            enabled: installEnabled,
-            onInstall: onInstall,
-            onInstallFirmware: onInstallFirmware,
-          ),
-          if (controller.latestTask case final task?)
-            InstallTaskCard(
-              task: task,
-              onCancel: controller.cancelInstall,
-              onRetry: controller.retryInstall,
-              onClear: controller.clearLatestTask,
+          ],
+          if (controller.error case final error?) ...[
+            const SizedBox(height: 10),
+            Text(
+              error,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
             ),
+          ],
+          const SizedBox(height: 16),
+          _MultiDeviceActions(
+            sessionId: session.id,
+            busy: busy,
+            connecting: connecting,
+            selectedTarget: selectedTarget,
+            onReconnect: onReconnect,
+            onDisconnect: onDisconnect,
+            onSetTarget: onSetTarget,
+          ),
         ],
-      ],
+      ),
+    );
+  }
+}
+
+class _MultiDeviceActions extends StatelessWidget {
+  const _MultiDeviceActions({
+    required this.sessionId,
+    required this.busy,
+    required this.connecting,
+    required this.selectedTarget,
+    required this.onReconnect,
+    required this.onDisconnect,
+    required this.onSetTarget,
+  });
+
+  final String sessionId;
+  final bool busy;
+  final bool connecting;
+  final bool selectedTarget;
+  final Future<void> Function() onReconnect;
+  final Future<void> Function() onDisconnect;
+  final VoidCallback onSetTarget;
+
+  @override
+  Widget build(BuildContext context) {
+    final reconnectButton = FilledButton.tonalIcon(
+      key: ValueKey('reconnect-device-$sessionId'),
+      onPressed: busy ? null : () => unawaited(onReconnect()),
+      icon: busy
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.refresh, size: 18),
+      label: Text(connecting ? '正在连接' : '重新连接'),
+    );
+    final disconnectButton = OutlinedButton.icon(
+      key: ValueKey('disconnect-device-$sessionId'),
+      onPressed: () => unawaited(onDisconnect()),
+      icon: const Icon(Icons.link_off, size: 18),
+      label: const Text('断开连接'),
+    );
+    final targetButton = selectedTarget
+        ? FilledButton.tonalIcon(
+            key: ValueKey('install-target-$sessionId'),
+            onPressed: onSetTarget,
+            icon: const Icon(Icons.check_circle_outline, size: 18),
+            label: const Text('安装目标'),
+          )
+        : OutlinedButton.icon(
+            key: ValueKey('set-install-target-$sessionId'),
+            onPressed: onSetTarget,
+            icon: const Icon(Icons.download_outlined, size: 18),
+            label: const Text('设为安装目标'),
+          );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 300) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              reconnectButton,
+              const SizedBox(height: 8),
+              disconnectButton,
+              const SizedBox(height: 8),
+              targetButton,
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(child: reconnectButton),
+                const SizedBox(width: 8),
+                Expanded(child: disconnectButton),
+              ],
+            ),
+            const SizedBox(height: 8),
+            targetButton,
+          ],
+        );
+      },
     );
   }
 }
@@ -1599,7 +1805,7 @@ class _DeviceStat extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 18, color: theme.colorScheme.primary),
+              Icon(icon, size: 18, color: theme.colorScheme.onSurface),
               const SizedBox(width: 6),
               Text(
                 detail,

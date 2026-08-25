@@ -10,6 +10,7 @@ import '../application/diagnostic_log_service.dart';
 import '../application/theme_controller.dart';
 import '../domain/floating_install_snapshot.dart';
 import '../platform/security_scoped_file_access.dart';
+import 'app_theme.dart';
 import 'floating_install_window.dart';
 
 /// Secondary-engine host for the compact Windows installation window.
@@ -142,16 +143,15 @@ class _FloatingInstallWindowAppState extends State<FloatingInstallWindowApp>
     );
     Map<Object?, Object?>? result;
     try {
-      result = await _channel.invokeMethod<Map<Object?, Object?>>(
-        'addFiles',
-        {'files': [
+      result = await _channel.invokeMethod<Map<Object?, Object?>>('addFiles', {
+        'files': [
           for (final file in files)
             {
               'path': file.path,
               if (file.bookmark != null) 'bookmark': file.bookmark,
             },
-        ]},
-      );
+        ],
+      });
     } on Object catch (error) {
       appLogger.error(
         '浮动安装窗口提交文件导入失败',
@@ -233,31 +233,23 @@ class _FloatingInstallWindowAppState extends State<FloatingInstallWindowApp>
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        scaffoldMessengerKey: _messengerKey,
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: _seedColor,
-            brightness: Brightness.light,
-          ),
-          brightness: Brightness.light,
-        ),
-        darkTheme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: _seedColor,
-            brightness: Brightness.dark,
-          ),
-          brightness: Brightness.dark,
-        ),
-        themeMode: ThemeMode.system,
-        home: FloatingInstallWindow(
-          snapshot: _snapshot,
-          onFilesDropped: _addFiles,
-          onOpenMainWindow: _openMainWindow,
-          onHideWindow: _hideWindow,
-          onRetry: _retry,
-        ),
-      );
+    debugShowCheckedModeBanner: false,
+    scaffoldMessengerKey: _messengerKey,
+    theme: buildWristloadTheme(
+      seedColor: _seedColor,
+      brightness: Brightness.light,
+    ),
+    darkTheme: buildWristloadTheme(
+      seedColor: _seedColor,
+      brightness: Brightness.dark,
+    ),
+    themeMode: ThemeMode.system,
+    home: FloatingInstallWindow(
+      snapshot: _snapshot,
+      onFilesDropped: _addFiles,
+      onOpenMainWindow: _openMainWindow,
+      onHideWindow: _hideWindow,
+      onRetry: _retry,
+    ),
+  );
 }

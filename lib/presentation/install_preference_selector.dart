@@ -23,10 +23,7 @@ class InstallPreferenceSelector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          '安装',
-          style: titleStyle ?? theme.textTheme.titleSmall,
-        ),
+        Text('安装', style: titleStyle ?? theme.textTheme.titleSmall),
         const SizedBox(height: 12),
         SegmentedButton<InstallPreference>(
           style: ButtonStyle(
@@ -41,28 +38,21 @@ class InstallPreferenceSelector extends StatelessWidget {
             ButtonSegment(
               value: InstallPreference.watchface,
               icon: Icon(Icons.watch),
-              label: Text('表盘设计优先'),
+              label: Text('表盘'),
             ),
             ButtonSegment(
               value: InstallPreference.quickApp,
               icon: Icon(Icons.apps),
-              label: Text('快应用开发优先'),
+              label: Text('快应用'),
             ),
             ButtonSegment(
               value: InstallPreference.both,
               icon: Icon(Icons.apps),
-              label: Text('均有开发'),
+              label: Text('全部'),
             ),
           ],
           selected: {value},
           onSelectionChanged: (selection) => onChanged(selection.single),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '主页安装按钮会优先显示所选类型；菜单中的临时安装不会修改此设置。',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
         ),
       ],
     );

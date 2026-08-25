@@ -241,7 +241,10 @@ class _DebugPageState extends State<DebugPage> {
                             color: colors.surfaceContainerHigh,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Icon(Icons.restart_alt, color: colors.primary),
+                          child: Icon(
+                            Icons.restart_alt,
+                            color: colors.onSurface,
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -254,6 +257,27 @@ class _DebugPageState extends State<DebugPage> {
                                 style: theme.textTheme.bodySmall,
                               ),
                             ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          size: 20,
+                          color: colors.error,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '警告！使用此功能切换手表模式可能导致手表数据丢失且无法找回！',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colors.error,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],
@@ -332,7 +356,7 @@ class _DebugPageState extends State<DebugPage> {
                           ),
                           child: Icon(
                             Icons.download_for_offline_outlined,
-                            color: colors.primary,
+                            color: colors.onSurface,
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -391,7 +415,7 @@ class _DebugPageState extends State<DebugPage> {
                       Padding(
                         padding: const EdgeInsets.only(top: 12),
                         child: SelectableText(
-                          '已导出${controller.latestDeviceLogId == null || controller.latestDeviceLogId!.isEmpty ? '' : '（${controller.latestDeviceLogId}）'}：$path',
+                          '已导出 ${controller.deviceLogFileCount} 个文件，目录：$path',
                           style: theme.textTheme.bodySmall,
                         ),
                       ),
@@ -421,7 +445,7 @@ class _DebugPageState extends State<DebugPage> {
                           ),
                           child: Icon(
                             Icons.bug_report_outlined,
-                            color: colors.primary,
+                            color: colors.onSurface,
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -624,7 +648,7 @@ class _DebugPageState extends State<DebugPage> {
                           ),
                           child: Icon(
                             Icons.fact_check_outlined,
-                            color: colors.primary,
+                            color: colors.onSurface,
                           ),
                         ),
                         const SizedBox(width: 12),

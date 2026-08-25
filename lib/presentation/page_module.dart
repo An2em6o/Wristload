@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../application/device_controller.dart';
+import '../application/performance_diagnostic_service.dart';
 import '../domain/install_models.dart';
 import '../domain/install_preference_store.dart';
 
@@ -22,8 +23,11 @@ class WristloadPageContext {
     required this.onDiagnosticLogWindowChanged,
     required this.themeSeedColor,
     required this.onThemeSeedChanged,
+    required this.tianyiBlueUnlocked,
+    required this.onUnlockTianyiBlue,
     required this.onReplayOobe,
     required this.onEditAuthKey,
+    required this.performanceDiagnostics,
   });
 
   final DeviceController controller;
@@ -37,8 +41,11 @@ class WristloadPageContext {
   final ValueChanged<bool>? onDiagnosticLogWindowChanged;
   final Color themeSeedColor;
   final ValueChanged<Color> onThemeSeedChanged;
+  final bool tianyiBlueUnlocked;
+  final AsyncCallback onUnlockTianyiBlue;
   final VoidCallback onReplayOobe;
   final VoidCallback onEditAuthKey;
+  final PerformanceDiagnosticService performanceDiagnostics;
 }
 
 typedef WristloadPageBuilder = Widget Function(WristloadPageContext context);

@@ -355,7 +355,7 @@ class _AppCard extends StatelessWidget {
                     color: colors.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(Icons.apps, color: colors.primary),
+                  child: Icon(Icons.apps, color: colors.onSurface),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -485,7 +485,7 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 56, color: colors.primary),
+          Icon(icon, size: 56, color: colors.onSurface),
           const SizedBox(height: 14),
           Text(title, style: theme.textTheme.titleLarge),
           const SizedBox(height: 6),

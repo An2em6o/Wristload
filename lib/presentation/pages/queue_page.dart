@@ -22,6 +22,7 @@ const wristloadPage = WristloadPageModule(
 
 Widget _buildQueuePage(WristloadPageContext context) =>
     QueuePage(controller: context.controller);
+
 class QueuePage extends StatefulWidget {
   const QueuePage({required this.controller, super.key});
 
@@ -74,9 +75,7 @@ class _QueuePageState extends State<QueuePage> {
     }
     if (imported.duplicateCount > 0) {
       messenger.showSnackBar(
-        SnackBar(
-          content: Text('${imported.duplicateCount} 个文件已在队列中，已跳过'),
-        ),
+        SnackBar(content: Text('${imported.duplicateCount} 个文件已在队列中，已跳过')),
       );
     }
   }
@@ -101,12 +100,14 @@ class _QueuePageState extends State<QueuePage> {
         for (final error in details.errors) {
           controller.reportError('无法拖入文件：${error.message}');
         }
-        _addPaths(details.files.map(
-          (file) => ScopedFileRef(
-            path: file.path,
-            bookmark: file.extraAppleBookmark,
+        _addPaths(
+          details.files.map(
+            (file) => ScopedFileRef(
+              path: file.path,
+              bookmark: file.extraAppleBookmark,
+            ),
           ),
-        ));
+        );
       },
       child: SafeArea(
         child: Stack(
@@ -156,7 +157,8 @@ class _QueuePageState extends State<QueuePage> {
                                 ),
                                 const SizedBox(width: 4),
                                 FilledButton.icon(
-                                  onPressed: controller.pendingCount > 0 &&
+                                  onPressed:
+                                      controller.pendingCount > 0 &&
                                           controller.sessionReady &&
                                           !controller.installInProgress &&
                                           !controller.timeSyncInProgress &&
@@ -164,9 +166,7 @@ class _QueuePageState extends State<QueuePage> {
                                       ? controller.runQueue
                                       : null,
                                   icon: const Icon(Icons.play_arrow),
-                                  label: Text(
-                                    hasStarted ? '继续安装' : '开始安装',
-                                  ),
+                                  label: Text(hasStarted ? '继续安装' : '开始安装'),
                                 ),
                               ],
                             ],
@@ -188,9 +188,9 @@ class _QueuePageState extends State<QueuePage> {
                                   ),
                                   onReorderItem: (oldIndex, newIndex) =>
                                       controller.reorderQueue(
-                                    oldIndex,
-                                    newIndex.clamp(0, queue.length),
-                                  ),
+                                        oldIndex,
+                                        newIndex.clamp(0, queue.length),
+                                      ),
                                   itemCount: queue.length + 1,
                                   itemBuilder: (context, index) {
                                     if (index == queue.length) {
@@ -216,9 +216,7 @@ class _QueuePageState extends State<QueuePage> {
               ),
             ),
             if (_dragging)
-              Positioned.fill(
-                child: _DropOverlay(fileCount: _dragFileCount),
-              ),
+              Positioned.fill(child: _DropOverlay(fileCount: _dragFileCount)),
           ],
         ),
       ),
@@ -285,19 +283,16 @@ class _QueueTile extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
-          subtitle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
+        subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             _QueueStatus(controller: controller, entry: entry),
             IconButton(
               tooltip: '从队列移除',
-              onPressed:
-                  installing ? null : () => controller.removeQueueEntry(index),
+              onPressed: installing
+                  ? null
+                  : () => controller.removeQueueEntry(index),
               icon: const Icon(Icons.delete_outline),
             ),
           ],
@@ -342,14 +337,12 @@ class _QueueStatus extends StatelessWidget {
     if (entry.stage == QueueStage.done) {
       return Tooltip(
         message: '已完成',
-        child: Icon(
-          Icons.check_circle,
-          color: theme.colorScheme.primary,
-        ),
+        child: Icon(Icons.check_circle, color: theme.colorScheme.onSurface),
       );
     }
 
-    final failed = entry.stage == QueueStage.failed ||
+    final failed =
+        entry.stage == QueueStage.failed ||
         entry.stage == QueueStage.cancelled ||
         entry.stage == QueueStage.stateUnknown;
     final canRetry = failed && entry.canRetry;
@@ -394,20 +387,11 @@ class _EmptyQueue extends StatelessWidget {
                     child: Icon(
                       Icons.upload_file,
                       size: 38,
-                      color: theme.colorScheme.primary,
+                      color: theme.colorScheme.onSurface,
                     ),
                   ),
                   const SizedBox(height: 12),
                   Text('队列为空', style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 4),
-                  Text(
-                    '拖入 .bin / .face 表盘或 .rpk 快应用文件加入队列\n'
-                    '文件将按顺序串行安装到已连接的设备',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
                   const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: onPick,
@@ -461,23 +445,11 @@ class _AddMoreTileState extends State<_AddMoreTile> {
                   Icon(Icons.add, color: foreground),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '添加更多文件',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            color: foreground,
-                          ),
-                        ),
-                        Text(
-                          '.bin / .face / .rpk，也可以直接拖入本页',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: foreground,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      '添加更多文件',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: foreground,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -515,15 +487,13 @@ class _DropOverlay extends StatelessWidget {
                   Icon(
                     Icons.upload_file,
                     size: 52,
-                    color: theme.colorScheme.primary,
+                    color: theme.colorScheme.onSurface,
                   ),
                   const SizedBox(height: 12),
                   Text('松开以加入队列', style: theme.textTheme.titleLarge),
                   const SizedBox(height: 4),
                   Text(
-                    fileCount > 0
-                        ? '检测到 $fileCount 个文件 · 将按扩展名自动识别类型'
-                        : '检测到文件 · 将按扩展名自动识别类型',
+                    fileCount > 0 ? '$fileCount 个文件' : '检测到文件',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -599,10 +569,7 @@ class _DashedBorderPainter extends CustomPainter {
     for (final metric in path.computeMetrics()) {
       var distance = 0.0;
       while (distance < metric.length) {
-        canvas.drawPath(
-          metric.extractPath(distance, distance + 8),
-          paint,
-        );
+        canvas.drawPath(metric.extractPath(distance, distance + 8), paint);
         distance += 13;
       }
     }

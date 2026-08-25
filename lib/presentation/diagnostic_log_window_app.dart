@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import '../application/diagnostic_log_service.dart';
 import '../application/diagnostic_log_window_coordinator.dart';
 import '../application/theme_controller.dart';
+import 'app_theme.dart';
 
 enum _CategoryFilter {
   all,
@@ -70,6 +71,11 @@ class _DiagnosticLogWindowAppState extends State<DiagnosticLogWindowApp>
   }
 
   Future<Object?> _handleMainCall(MethodCall call) async {
+    if (call.method == 'destroy') {
+      await windowManager.setPreventClose(false);
+      await windowManager.destroy();
+      return true;
+    }
     if (call.method != 'snapshot' &&
         call.method != 'append' &&
         call.method != 'reset')
@@ -158,13 +164,9 @@ class _DiagnosticLogWindowAppState extends State<DiagnosticLogWindowApp>
     super.dispose();
   }
 
-  ThemeData _theme(Brightness brightness) => ThemeData(
-    useMaterial3: true,
+  ThemeData _theme(Brightness brightness) => buildWristloadTheme(
+    seedColor: _themeSeedColor,
     brightness: brightness,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: _themeSeedColor,
-      brightness: brightness,
-    ),
     visualDensity: VisualDensity.standard,
     inputDecorationTheme: const InputDecorationTheme(
       border: OutlineInputBorder(),

@@ -150,7 +150,7 @@ class InstallTaskCard extends StatelessWidget {
                     color: colors.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(_headerIcon, color: colors.primary),
+                  child: Icon(_headerIcon, color: colors.onSurface),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

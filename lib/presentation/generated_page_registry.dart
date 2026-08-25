@@ -1,13 +1,14 @@
 // GENERATED CODE - DO NOT EDIT.
-// Run tool/generate_page_registry.ps1 or tool/generate_page_registry.dart after adding or removing a page module.
+// Run tool/generate_page_registry.ps1 after adding or removing a page module.
 import 'page_module.dart';
-import 'pages/apps_page.dart' as page0;
-import 'pages/debug_page.dart' as page1;
-import 'pages/home_page.dart' as page2;
-import 'pages/queue_page.dart' as page3;
-import 'pages/settings_page.dart' as page4;
-import 'pages/tools_page.dart' as page5;
-import 'pages/watchfaces_page.dart' as page6;
+import 'pages/about_page.dart' as page0;
+import 'pages/apps_page.dart' as page1;
+import 'pages/debug_page.dart' as page2;
+import 'pages/home_page.dart' as page3;
+import 'pages/queue_page.dart' as page4;
+import 'pages/settings_page.dart' as page5;
+import 'pages/tools_page.dart' as page6;
+import 'pages/watchfaces_page.dart' as page7;
 
 const generatedPageModules = <WristloadPageModule>[
   page0.wristloadPage,
@@ -17,4 +18,5 @@ const generatedPageModules = <WristloadPageModule>[
   page4.wristloadPage,
   page5.wristloadPage,
   page6.wristloadPage,
+  page7.wristloadPage,
 ];

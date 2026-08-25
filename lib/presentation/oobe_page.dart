@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../domain/install_preference_store.dart';
 import 'install_preference_selector.dart';
 import 'oobe_install_preview.dart';
+import 'oobe_logo_animation.dart';
 
 class OobePage extends StatefulWidget {
   const OobePage({
@@ -142,8 +143,9 @@ class _OobePageState extends State<OobePage> {
                             alignment: Alignment.centerRight,
                             child: FilledButton.icon(
                               key: const ValueKey('oobe-next'),
-                              onPressed:
-                                  _completing ? null : () => unawaited(_next()),
+                              onPressed: _completing
+                                  ? null
+                                  : () => unawaited(_next()),
                               iconAlignment: IconAlignment.end,
                               icon: _completing
                                   ? const SizedBox.square(
@@ -190,20 +192,12 @@ class _WelcomePage extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const OobeLogoAnimation(key: ValueKey('oobe-logo-animation')),
+              const SizedBox(height: 28),
               Text(
                 '欢迎使用 Wristload',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 18),
-              Text(
-                '面向设计师与开发者的小米手环安装工具\n'
-                '拖入文件，即可把表盘与快应用装入手环',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  height: 1.6,
-                ),
               ),
             ],
           ),
@@ -235,23 +229,10 @@ class _PreferencePage extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: theme.textTheme.headlineSmall,
               ),
-              const SizedBox(height: 6),
-              Text(
-                '主页安装按钮将按你的偏好排布，之后可随时在设置中修改',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
               const SizedBox(height: 24),
-              Text('主页按钮预览', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 10),
               OobeInstallPreview(preference: value),
               const SizedBox(height: 26),
-              InstallPreferenceSelector(
-                value: value,
-                onChanged: onChanged,
-              ),
+              InstallPreferenceSelector(value: value, onChanged: onChanged),
             ],
           ),
         ),
@@ -278,16 +259,6 @@ class _ReadyPage extends StatelessWidget {
                 '一切就绪',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 18),
-              Text(
-                '安装偏好已保存，你可以随时在设置中修改。\n'
-                '接下来连接设备并开始安装。',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  height: 1.6,
-                ),
               ),
             ],
           ),

@@ -60,6 +60,18 @@ namespace bluetooth_low_energy_windows
 
 	CentralManagerImpl::~CentralManagerImpl()
 	{
+		// Stop platform callbacks first, then close RFCOMM streams so pending
+		// LoadAsync operations are released before the Flutter engine disappears.
+		m_post_to_platform = nullptr;
+		std::vector<int64_t> rfcomm_addresses;
+		for (const auto &entry : m_rfcomm_sockets)
+		{
+			rfcomm_addresses.push_back(entry.first);
+		}
+		for (const auto address : rfcomm_addresses)
+		{
+			DisconnectRfcomm(address);
+		}
 		try
 		{
 			if (m_watcher.has_value() &&
@@ -321,12 +333,18 @@ namespace bluetooth_low_energy_windows
 	winrt::fire_and_forget CentralManagerImpl::ConnectRfcommAsync(int64_t address_args, const std::string &service_uuid_args, std::function<void(ErrorOr<std::vector<uint8_t>> reply)> result)
 	{
 		std::string stage = "initialize";
+		uint64_t generation = 0;
+		auto is_current_generation = [&]()
+		{
+			const std::lock_guard<std::mutex> lock(m_rfcomm_generation_mutex);
+			const auto it = m_rfcomm_generations.find(address_args);
+			return it != m_rfcomm_generations.end() && it->second == generation;
+		};
 		try
 		{
 			// Replace the previous WinRT objects instead of overwriting map entries.
 			// Disconnect invalidates the old read loop before Close() reports EOF.
 			DisconnectRfcomm(address_args);
-			uint64_t generation;
 			{
 				const std::lock_guard<std::mutex> lock(m_rfcomm_generation_mutex);
 				generation = ++m_rfcomm_generations[address_args];
@@ -344,55 +362,131 @@ namespace bluetooth_low_energy_windows
 				static_cast<unsigned>(address & 0xff));
 			const std::string mac(mac_buf);
 
-			// Pair the classic BR/EDR device identity, not the RFCOMM service child.
-			// Pairing the service child can make the Windows pairing broker fail with
-			// RPC_E_SERVERFAULT before it displays the computer-name ceremony.
-			stage = "resolve classic Bluetooth identity";
-			const auto classic_selector = winrt::Windows::Devices::Bluetooth::BluetoothDevice::GetDeviceSelectorFromBluetoothAddress(address);
-			const auto classic_infos = co_await winrt::Windows::Devices::Enumeration::DeviceInformation::FindAllAsync(classic_selector);
-			if (classic_infos.Size() == 0)
+			// beta0.1.3 first paired the advertised BLE identity. On this wearable,
+			// that is what promptly starts the Windows computer-name pairing flow and
+			// causes the BR/EDR identity and its SPP service to be published.
+			stage = "resolve BLE identity";
+			const auto ble_device = co_await winrt::Windows::Devices::Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(address);
+			if (!is_current_generation())
 			{
-				throw BluetoothLowEnergyException(
-					"Classic Bluetooth identity not found for MAC: " + mac +
-					". Wake the band and keep its pairing screen open");
+				result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+				co_return;
 			}
-
-			const auto classic_info = classic_infos.GetAt(0);
-			auto classic_pairing = classic_info.Pairing();
-			if (!classic_pairing.IsPaired())
+			if (ble_device == nullptr)
 			{
-				// This is the only PairAsync in the RFCOMM connection path. Windows
-				// presents the computer-name pairing request for the classic identity.
-				stage = "pair classic Bluetooth identity";
-				const auto pairing_result = co_await classic_pairing.PairAsync();
+				throw BluetoothLowEnergyException("Bluetooth device not found for address: " + mac);
+			}
+			stage = "read BLE pairing state";
+			const auto ble_device_info = co_await winrt::Windows::Devices::Enumeration::DeviceInformation::CreateFromIdAsync(
+				ble_device.BluetoothDeviceId().Id());
+			if (!is_current_generation())
+			{
+				result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+				co_return;
+			}
+			auto ble_pairing = ble_device_info.Pairing();
+			bool paired_now = false;
+			if (!ble_pairing.IsPaired())
+			{
+				stage = "pair BLE identity";
+				const auto pairing_result = co_await ble_pairing.PairAsync();
+				if (!is_current_generation())
+				{
+					result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+					co_return;
+				}
 				const auto status = pairing_result.Status();
 				if (status != winrt::Windows::Devices::Enumeration::DevicePairingResultStatus::Paired &&
 					status != winrt::Windows::Devices::Enumeration::DevicePairingResultStatus::AlreadyPaired)
 				{
-					throw BluetoothLowEnergyException(
-						"Classic Bluetooth pairing failed: status=" + PairingStatusName(status) +
-						"(" + std::to_string(static_cast<int>(status)) +
-						") - confirm the computer pairing prompt on the band");
+					throw BluetoothLowEnergyException("RFCOMM pairing failed (status: " + std::to_string(static_cast<int>(status)) + ") - confirm the pairing on the band screen");
 				}
+				paired_now = status == winrt::Windows::Devices::Enumeration::DevicePairingResultStatus::Paired;
+			}
+			if (paired_now)
+			{
 				co_await winrt::resume_after(std::chrono::milliseconds(800));
+				if (!is_current_generation())
+				{
+					result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+					co_return;
+				}
 			}
 
-			// Pairing completion and RFCOMM service publication are separate Windows
-			// operations. Re-resolve the classic device and query SPP uncached.
 			winrt::Windows::Devices::Bluetooth::BluetoothDevice classic_device = nullptr;
-			for (int attempt = 0; attempt < 6 && classic_device == nullptr; ++attempt)
+			for (int attempt = 0; attempt < 5 && classic_device == nullptr; ++attempt)
 			{
-				stage = "refresh classic Bluetooth identity";
+				stage = "resolve classic Bluetooth identity";
 				classic_device = co_await winrt::Windows::Devices::Bluetooth::BluetoothDevice::FromBluetoothAddressAsync(address);
-				if (classic_device == nullptr && attempt < 5)
+				if (!is_current_generation())
 				{
-					co_await winrt::resume_after(std::chrono::milliseconds(500));
+					result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+					co_return;
+				}
+				if (classic_device == nullptr)
+				{
+					const auto classic_selector = winrt::Windows::Devices::Bluetooth::BluetoothDevice::GetDeviceSelectorFromBluetoothAddress(address);
+					const auto classic_infos = co_await winrt::Windows::Devices::Enumeration::DeviceInformation::FindAllAsync(classic_selector);
+					if (!is_current_generation())
+					{
+						result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+						co_return;
+					}
+					if (classic_infos.Size() > 0)
+					{
+						auto classic_pairing = classic_infos.GetAt(0).Pairing();
+						if (!classic_pairing.IsPaired())
+						{
+							stage = "pair classic Bluetooth identity";
+							const auto pairing_result = co_await classic_pairing.PairAsync();
+							if (!is_current_generation())
+							{
+								result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+								co_return;
+							}
+							const auto status = pairing_result.Status();
+							if (status != winrt::Windows::Devices::Enumeration::DevicePairingResultStatus::Paired &&
+								status != winrt::Windows::Devices::Enumeration::DevicePairingResultStatus::AlreadyPaired)
+							{
+								throw BluetoothLowEnergyException("Classic Bluetooth pairing failed (status: " + std::to_string(static_cast<int>(status)) + ") - confirm pairing on the band");
+							}
+						}
+					}
+					co_await winrt::resume_after(std::chrono::milliseconds(600));
+					if (!is_current_generation())
+					{
+						result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+						co_return;
+					}
 				}
 			}
 			if (classic_device == nullptr)
 			{
-				throw BluetoothLowEnergyException(
-					"Classic Bluetooth identity was not published after pairing for MAC: " + mac);
+				throw BluetoothLowEnergyException("Classic Bluetooth identity was not published for MAC: " + mac +
+					" (Windows currently has only the BLE identity; wake the band and confirm its Bluetooth pairing prompt)");
+			}
+			auto classic_pairing = classic_device.DeviceInformation().Pairing();
+			if (!classic_pairing.IsPaired())
+			{
+				stage = "pair classic Bluetooth identity";
+				const auto pairing_result = co_await classic_pairing.PairAsync();
+				if (!is_current_generation())
+				{
+					result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+					co_return;
+				}
+				const auto status = pairing_result.Status();
+				if (status != winrt::Windows::Devices::Enumeration::DevicePairingResultStatus::Paired &&
+					status != winrt::Windows::Devices::Enumeration::DevicePairingResultStatus::AlreadyPaired)
+				{
+					throw BluetoothLowEnergyException("Classic Bluetooth pairing failed (status: " + std::to_string(static_cast<int>(status)) + ") - confirm pairing on the band");
+				}
+				co_await winrt::resume_after(std::chrono::milliseconds(800));
+				if (!is_current_generation())
+				{
+					result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+					co_return;
+				}
 			}
 
 			const auto serial_port = winrt::Windows::Devices::Bluetooth::Rfcomm::RfcommServiceId::SerialPort();
@@ -400,20 +494,30 @@ namespace bluetooth_low_energy_windows
 			int last_rfcomm_error = 0;
 			for (int attempt = 0; attempt < 6 && service == nullptr; ++attempt)
 			{
-				stage = "query RFCOMM serial service";
+				stage = "query target RFCOMM serial service";
 				const auto services_result = co_await classic_device.GetRfcommServicesForIdAsync(
 					serial_port, winrt::Windows::Devices::Bluetooth::BluetoothCacheMode::Uncached);
-				last_rfcomm_error = static_cast<int>(services_result.Error());
-				const auto services = services_result.Services();
-				if (last_rfcomm_error == static_cast<int>(winrt::Windows::Devices::Bluetooth::BluetoothError::Success) &&
-					services.Size() > 0)
+				if (!is_current_generation())
 				{
-					service = services.GetAt(0);
+					result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+					co_return;
+				}
+				last_rfcomm_error = static_cast<int>(services_result.Error());
+				const auto target_services = services_result.Services();
+				if (last_rfcomm_error == static_cast<int>(winrt::Windows::Devices::Bluetooth::BluetoothError::Success) &&
+					target_services.Size() > 0)
+				{
+					service = target_services.GetAt(0);
 					break;
 				}
 				if (attempt < 5)
 				{
-					co_await winrt::resume_after(std::chrono::milliseconds(500));
+					co_await winrt::resume_after(std::chrono::milliseconds(600));
+					if (!is_current_generation())
+					{
+						result(FlutterError("std::exception", "RFCOMM connection was cancelled"));
+						co_return;
+					}
 				}
 			}
 			if (service == nullptr)
@@ -424,14 +528,18 @@ namespace bluetooth_low_energy_windows
 			}
 
 			auto socket = winrt::Windows::Networking::Sockets::StreamSocket();
-			// RFCOMM advertises the protection level accepted by the service. Using
-			// the two-argument overload creates a PlainSocket, which Windows may abort
-			// shortly after pairing even though the initial exchange succeeded.
 			stage = "connect RFCOMM socket";
 			co_await socket.ConnectAsync(
 				service.ConnectionHostName(),
 				service.ConnectionServiceName(),
 				service.MaxProtectionLevel());
+			if (!is_current_generation())
+			{
+				socket.Close();
+				service.Close();
+				result(FlutterError("std::exception", "RFCOMM connection completed after cancellation"));
+				co_return;
+			}
 
 			m_rfcomm_services[address_args] = service;
 			m_rfcomm_sockets[address_args] = socket;
@@ -445,7 +553,10 @@ namespace bluetooth_low_energy_windows
 		}
 		catch (const winrt::hresult_error &ex)
 		{
-			DisconnectRfcomm(address_args);
+			if (is_current_generation())
+			{
+				DisconnectRfcomm(address_args);
+			}
 			const auto code = "winrt::hresult_error";
 			const auto winrt_message = ex.message();
 			const auto message = stage + " failed (HRESULT " +
@@ -455,7 +566,10 @@ namespace bluetooth_low_energy_windows
 		}
 		catch (const std::exception &ex)
 		{
-			DisconnectRfcomm(address_args);
+			if (is_current_generation())
+			{
+				DisconnectRfcomm(address_args);
+			}
 			const auto code = "std::exception";
 			const auto message = ex.what();
 			result(FlutterError(code, message));

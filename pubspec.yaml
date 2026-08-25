@@ -44,3 +44,5 @@ flutter:
   uses-material-design: true
   assets:
     - windows/runner/resources/app_icon.ico
+    - assets/developers/liang-yi.png
+    - assets/developers/ikun-cxkpro.png

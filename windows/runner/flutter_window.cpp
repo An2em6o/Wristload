@@ -15,9 +15,62 @@
 
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
 #include "flutter/generated_plugin_registrant.h"
+#include "resource.h"
 #include "utils.h"
 
 namespace {
+
+constexpr UINT kPerformanceNotificationId = 0x5752;
+constexpr UINT_PTR kPerformanceNotificationTimer = 0x5752;
+
+std::wstring Utf16FromUtf8(const std::string& value) {
+  if (value.empty()) return std::wstring();
+  const int length = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+      static_cast<int>(value.size()), nullptr, 0);
+  if (length <= 0) return std::wstring();
+  std::wstring converted(static_cast<size_t>(length), L'\0');
+  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                          static_cast<int>(value.size()), converted.data(),
+                          length) == 0) {
+    return std::wstring();
+  }
+  return converted;
+}
+
+void RemovePerformanceNotification(HWND window) {
+  NOTIFYICONDATA data{};
+  data.cbSize = sizeof(data);
+  data.hWnd = window;
+  data.uID = kPerformanceNotificationId;
+  Shell_NotifyIcon(NIM_DELETE, &data);
+}
+
+bool ShowPerformanceNotification(HWND window, const std::string& title,
+                                 const std::string& body) {
+  if (window == nullptr) return false;
+  RemovePerformanceNotification(window);
+
+  NOTIFYICONDATA data{};
+  data.cbSize = sizeof(data);
+  data.hWnd = window;
+  data.uID = kPerformanceNotificationId;
+  data.uFlags = NIF_ICON | NIF_TIP;
+  data.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  wcscpy_s(data.szTip, L"Wristload");
+  if (!Shell_NotifyIcon(NIM_ADD, &data)) return false;
+
+  const std::wstring wide_title = Utf16FromUtf8(title);
+  const std::wstring wide_body = Utf16FromUtf8(body);
+  data.uFlags = NIF_INFO;
+  wcsncpy_s(data.szInfoTitle, wide_title.c_str(), _TRUNCATE);
+  wcsncpy_s(data.szInfo, wide_body.c_str(), _TRUNCATE);
+  data.dwInfoFlags = NIIF_WARNING | NIIF_LARGE_ICON;
+  data.uTimeout = 10000;
+  const bool shown = Shell_NotifyIcon(NIM_MODIFY, &data) != FALSE;
+  SetTimer(window, kPerformanceNotificationTimer, 12000, nullptr);
+  return shown;
+}
 
 bool IsValidAuthKey(const std::string& value) {
   if (value.size() != 32) return false;
@@ -263,6 +316,43 @@ void RegisterSystemTime(flutter::BinaryMessenger* messenger) {
   });
 }
 
+void RegisterWindowsNotifications(flutter::BinaryMessenger* messenger,
+                                  HWND window) {
+  auto channel =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          messenger, "wristload/windows_notifications",
+          &flutter::StandardMethodCodec::GetInstance());
+  channel->SetMethodCallHandler([window](const auto& call, auto result) {
+    if (call.method_name() != "show") {
+      result->NotImplemented();
+      return;
+    }
+    const auto* arguments =
+        std::get_if<flutter::EncodableMap>(call.arguments());
+    if (arguments == nullptr) {
+      result->Error("windows_notifications", "Missing notification arguments");
+      return;
+    }
+    const auto title_it = arguments->find(flutter::EncodableValue("title"));
+    const auto body_it = arguments->find(flutter::EncodableValue("body"));
+    const auto* title = title_it == arguments->end()
+                            ? nullptr
+                            : std::get_if<std::string>(&title_it->second);
+    const auto* body = body_it == arguments->end()
+                           ? nullptr
+                           : std::get_if<std::string>(&body_it->second);
+    if (title == nullptr || body == nullptr) {
+      result->Error("windows_notifications", "Invalid notification arguments");
+      return;
+    }
+    if (!ShowPerformanceNotification(window, *title, *body)) {
+      result->Error("windows_notifications", "Windows notification failed");
+      return;
+    }
+    result->Success();
+  });
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -299,6 +389,8 @@ bool FlutterWindow::OnCreate() {
   });
   RegisterSecureStore(flutter_controller_->engine()->messenger());
   RegisterSystemTime(flutter_controller_->engine()->messenger());
+  RegisterWindowsNotifications(flutter_controller_->engine()->messenger(),
+                               GetHandle());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -314,6 +406,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  KillTimer(GetHandle(), kPerformanceNotificationTimer);
+  RemovePerformanceNotification(GetHandle());
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -336,6 +430,13 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_TIMER:
+      if (wparam == kPerformanceNotificationTimer) {
+        KillTimer(hwnd, kPerformanceNotificationTimer);
+        RemovePerformanceNotification(hwnd);
+        return 0;
+      }
+      break;
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;

@@ -208,7 +208,7 @@ class _DragOverContent extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.upload_file, size: 30, color: colors.primary),
+          Icon(Icons.upload_file, size: 30, color: colors.onSurface),
           const SizedBox(height: 5),
           Text(
             '松开开始安装',
@@ -285,7 +285,7 @@ class _IdleContent extends StatelessWidget {
           ],
         ),
         const Spacer(),
-        Icon(Icons.upload_file, color: colors.primary, size: 30),
+        Icon(Icons.upload_file, color: colors.onSurface, size: 30),
         const SizedBox(height: 2),
         Text(
           snapshot.connected ? '拖入文件即安装' : '点击连接设备',

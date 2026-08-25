@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'application/device_controller.dart';
 import 'application/diagnostic_log_service.dart';
+import 'application/performance_diagnostic_service.dart';
 import 'application/diagnostic_log_window_coordinator.dart';
 import 'application/floating_window_coordinator.dart';
 import 'application/theme_controller.dart';
@@ -167,6 +168,7 @@ class WristloadApp extends StatefulWidget {
 class _WristloadAppState extends State<WristloadApp>
     with WidgetsBindingObserver {
   final controller = DeviceController(logger: appLogger);
+  final _performanceDiagnostics = PerformanceDiagnosticService();
   final _appShellKey = GlobalKey<_AppShellState>();
   final _installRequestPreflight = const InstallRequestPreflight();
   final _installPreferenceStore = InstallPreferenceStore();
@@ -189,6 +191,9 @@ class _WristloadAppState extends State<WristloadApp>
   @override
   void initState() {
     super.initState();
+    _performanceDiagnostics.stateSnapshotProvider =
+        _buildPerformanceStateSnapshot;
+    unawaited(_performanceDiagnostics.start());
     if (Platform.isMacOS) {
       WidgetsBinding.instance.addObserver(this);
     }
@@ -310,6 +315,7 @@ class _WristloadAppState extends State<WristloadApp>
       onAutoOpenDiagnosticLogChanged: (Platform.isWindows || Platform.isMacOS)
           ? _setAutoOpenDiagnosticLog
           : null,
+      performanceDiagnostics: _performanceDiagnostics,
     ),
   );
 
@@ -430,6 +436,22 @@ class _WristloadAppState extends State<WristloadApp>
     }
   }
 
+  String _buildPerformanceStateSnapshot() => <String>[
+    'bluetooth state: ${controller.bluetoothState.name}',
+    'scanning: ${controller.isScanning}',
+    'connecting: ${controller.isConnecting}',
+    'connected: ${controller.isConnected}',
+    'session ready: ${controller.sessionReady}',
+    'installing: ${controller.installInProgress}',
+    'queue running: ${controller.queueRunning}',
+    'pending installs: ${controller.pendingCount}',
+    'connection mode: ${controller.connectionMode.name}',
+    'device profile: ${controller.connectedProfile?.displayName ?? 'none'}',
+    'firmware version: ${controller.connectedFirmwareVersion ?? 'unknown'}',
+    'floating install window: $_floatingInstallWindowEnabled',
+    'diagnostic log window: $_diagnosticLogWindowOpen',
+  ].join('\n');
+
   Future<void> _exitApplication() async {
     if (_exitCleanupStarted) return;
     _exitCleanupStarted = true;
@@ -453,6 +475,7 @@ class _WristloadAppState extends State<WristloadApp>
           const Duration(milliseconds: 700),
         ),
         controller.disconnect().timeout(const Duration(seconds: 1)),
+        _performanceDiagnostics.shutdown(),
       ]).timeout(const Duration(milliseconds: 1100));
     } on Object catch (error) {
       appLogger.warning(
@@ -487,6 +510,7 @@ class _WristloadAppState extends State<WristloadApp>
     unawaited(_floatingWindowCoordinator.dispose());
     unawaited(_diagnosticLogWindowCoordinator.dispose());
     controller.dispose();
+    _performanceDiagnostics.dispose();
     _themeController.dispose();
     super.dispose();
   }
@@ -553,6 +577,7 @@ class _WristloadAppState extends State<WristloadApp>
       onUnlockTianyiBlue: _unlockTianyiBlue,
       onReplayOobe: _replayOobe,
       onEditAuthKey: () => _appShellKey.currentState?._editAuthKey(),
+      performanceDiagnostics: _performanceDiagnostics,
     ),
   );
 }
@@ -569,6 +594,7 @@ class AppShell extends StatefulWidget {
     required this.onThemeSeedChanged,
     required this.tianyiBlueUnlocked,
     required this.onUnlockTianyiBlue,
+    required this.performanceDiagnostics,
     this.diagnosticLogWindowOpen = false,
     this.autoOpenDiagnosticLog = false,
     this.onDiagnosticLogWindowChanged,
@@ -585,6 +611,7 @@ class AppShell extends StatefulWidget {
   final ValueChanged<Color> onThemeSeedChanged;
   final bool tianyiBlueUnlocked;
   final AsyncCallback onUnlockTianyiBlue;
+  final PerformanceDiagnosticService performanceDiagnostics;
   final ValueChanged<bool>? onFloatingInstallWindowEnabledChanged;
   final bool diagnosticLogWindowOpen;
   final bool autoOpenDiagnosticLog;
@@ -604,6 +631,7 @@ class _AppShellState extends State<AppShell> {
   bool _initialScanScheduled = false;
   bool _pairingScanScheduled = false;
   late bool _wasConnectionActive;
+  String? _lastPerformanceState;
 
   bool get _connectionActive =>
       widget.controller.isConnected || widget.controller.isConnectionBusy;
@@ -629,6 +657,7 @@ class _AppShellState extends State<AppShell> {
     onUnlockTianyiBlue: widget.onUnlockTianyiBlue,
     onReplayOobe: widget.onReplayOobe,
     onEditAuthKey: _editAuthKey,
+    performanceDiagnostics: widget.performanceDiagnostics,
   );
 
   NavigationRailDestination _navigationDestination(WristloadPageModule module) {
@@ -652,6 +681,7 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _wasConnectionActive = _connectionActive;
+    _recordSelectedPage();
     widget.controller.addListener(_handleControllerChanged);
     _handleControllerChanged();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -662,14 +692,13 @@ class _AppShellState extends State<AppShell> {
           widget.controller.isConnectionBusy) {
         return;
       }
-      final autoConnectStarted = await widget.controller
-          .autoConnectLastDevice();
+      // Startup must remain passive: do not connect a previously saved device
+      // until the user explicitly starts the connection flow. A scan is still
+      // allowed here so the home page can populate the device browser.
       if (!mounted ||
-          autoConnectStarted ||
           widget.controller.isConnected ||
           widget.controller.isConnectionBusy ||
-          widget.controller.isScanning ||
-          !widget.controller.canScan) {
+          widget.controller.isScanning) {
         return;
       }
       await widget.controller.beginStartupScan();
@@ -693,6 +722,20 @@ class _AppShellState extends State<AppShell> {
   void _handleControllerChanged() {
     _handleConnectionFailureReport();
     _handleConnectionIssue();
+    final performanceState = <String>[
+      'scanning=${widget.controller.isScanning}',
+      'connecting=${widget.controller.isConnecting}',
+      'connected=${widget.controller.isConnected}',
+      'sessionReady=${widget.controller.sessionReady}',
+      'installing=${widget.controller.installInProgress}',
+      'queueRunning=${widget.controller.queueRunning}',
+    ].join(' ');
+    if (_lastPerformanceState != performanceState) {
+      _lastPerformanceState = performanceState;
+      widget.performanceDiagnostics.recordBehavior(
+        'application state changed: $performanceState',
+      );
+    }
     final active = _connectionActive;
     // V2 devices can briefly replace their first RFCOMM socket immediately
     // after f=27.  A connection is only over once it has left the verified,
@@ -709,6 +752,23 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     _wasConnectionActive = active;
+  }
+
+  void _recordSelectedPage() {
+    final modules = _pageModules;
+    if (modules.isEmpty || _selectedIndex >= modules.length) return;
+    final module = modules[_selectedIndex];
+    widget.performanceDiagnostics.recordPage(
+      id: module.id,
+      route: module.route,
+      label: module.label,
+    );
+  }
+
+  void _selectPage(int index) {
+    if (index == _selectedIndex) return;
+    setState(() => _selectedIndex = index);
+    _recordSelectedPage();
   }
 
   void _handleConnectionFailureReport() {
@@ -828,6 +888,7 @@ class _AppShellState extends State<AppShell> {
     final homeIndex = _pageModules.indexWhere((module) => module.id == 'home');
     if (homeIndex >= 0 && _selectedIndex != homeIndex) {
       setState(() => _selectedIndex = homeIndex);
+      _recordSelectedPage();
     }
   }
 
@@ -953,8 +1014,7 @@ class _AppShellState extends State<AppShell> {
             NavigationRail(
               selectedIndex: selectedIndex,
               labelType: NavigationRailLabelType.all,
-              onDestinationSelected: (index) =>
-                  setState(() => _selectedIndex = index),
+              onDestinationSelected: _selectPage,
               destinations: modules.map(_navigationDestination).toList(),
             ),
             const VerticalDivider(width: 1),

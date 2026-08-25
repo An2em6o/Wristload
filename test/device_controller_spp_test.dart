@@ -39,20 +39,24 @@ void main() {
     expect(controller.sessionReady, isFalse);
   });
 
-  test('RFCOMM connect timeout publishes the two-second connection issue',
-      () async {
-    final transport = _FakeBleTransport(
-      connectDelay: const Duration(seconds: 3),
-    );
-    final controller = _controllerWithDevice(transport);
+  test(
+    'RFCOMM connect timeout publishes the two-second connection issue',
+    () async {
+      final transport = _FakeBleTransport(
+        connectDelay: const Duration(seconds: 3),
+      );
+      final controller = _controllerWithDevice(transport);
 
-    await controller.connectSpp();
+      await controller.connectSpp();
 
-    expect(controller.pendingConnectionIssue?.kind,
-        ConnectionIssueKind.rfcommTimeout);
-    expect(controller.sppConnecting, isFalse);
-    expect(transport.calls, contains('disconnect'));
-  });
+      expect(
+        controller.pendingConnectionIssue?.kind,
+        ConnectionIssueKind.rfcommTimeout,
+      );
+      expect(controller.sppConnecting, isFalse);
+      expect(transport.calls, contains('disconnect'));
+    },
+  );
 
   test('L1START write failure closes the connected RFCOMM channel', () async {
     final transport = _FakeBleTransport(writeError: StateError('write failed'));
@@ -89,6 +93,28 @@ void main() {
       await first;
       expect(completed, isTrue);
       expect(controller.sppConnecting, isFalse);
+    },
+  );
+
+  test(
+    'reentrant connecting notification shares the initial RFCOMM request',
+    () async {
+      final transport = _FakeBleTransport();
+      final controller = _controllerWithDevice(transport);
+      Future<void>? reentrantConnect;
+      var requested = false;
+      controller.addListener(() {
+        if (!requested && controller.sppConnecting) {
+          requested = true;
+          reentrantConnect = controller.connectSpp();
+        }
+      });
+
+      await controller.connectSpp();
+      await reentrantConnect;
+
+      expect(transport.calls.where((call) => call == 'connect'), hasLength(1));
+      expect(controller.logs, contains('SPP 连接请求已在进行，忽略重复 RFCOMM 建链。'));
     },
   );
 

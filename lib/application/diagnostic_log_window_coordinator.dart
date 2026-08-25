@@ -124,6 +124,23 @@ class DiagnosticLogWindowCoordinator {
     _publish();
   }
 
+  Future<void> shutdown() async {
+    if (_disposed) return;
+    _disposed = true;
+    _ready = false;
+    _publishPending = false;
+    _logger.removeListener(_publish);
+    try {
+      if (_window != null) {
+        await _channel.invokeMethod<void>('destroy');
+      }
+    } on Object {
+      // The secondary engine may already have closed.
+    }
+    _window = null;
+    await _channel.setMethodCallHandler(null);
+  }
+
   Future<Object?> _handleWindowCall(MethodCall call) async {
     switch (call.method) {
       case 'ready':
@@ -201,9 +218,6 @@ class DiagnosticLogWindowCoordinator {
   }
 
   Future<void> dispose() async {
-    if (_disposed) return;
-    _disposed = true;
-    _logger.removeListener(_publish);
-    await _channel.setMethodCallHandler(null);
+    await shutdown();
   }
 }

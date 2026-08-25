@@ -6,6 +6,7 @@ import 'package:wristload/domain/install_preference_store.dart';
 import 'package:wristload/domain/oobe_store.dart';
 import 'package:wristload/main.dart';
 import 'package:wristload/presentation/oobe_install_preview.dart';
+import 'package:wristload/presentation/oobe_logo_animation.dart';
 import 'package:wristload/presentation/oobe_page.dart';
 
 void main() {
@@ -96,6 +97,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(OobePage), findsOneWidget);
+    expect(find.byType(OobeLogoAnimation), findsOneWidget);
+    expect(find.byKey(const ValueKey('oobe-logo-animation')), findsOneWidget);
     expect(find.text('欢迎使用 Wristload'), findsOneWidget);
     expect(find.text('主页'), findsNothing);
 
@@ -129,10 +132,7 @@ void main() {
     await tester.pumpAndSettle();
 
     var preferences = await SharedPreferences.getInstance();
-    expect(
-      preferences.getString(InstallPreferenceStore.key),
-      'both',
-    );
+    expect(preferences.getString(InstallPreferenceStore.key), 'both');
 
     await tester.tap(find.byKey(const ValueKey('oobe-next')));
     await tester.pumpAndSettle();
@@ -141,10 +141,7 @@ void main() {
 
     preferences = await SharedPreferences.getInstance();
     expect(preferences.getBool(OobeStore.key), isTrue);
-    expect(
-      preferences.getString(InstallPreferenceStore.key),
-      'both',
-    );
+    expect(preferences.getString(InstallPreferenceStore.key), 'both');
     expect(find.byType(OobePage), findsNothing);
     expect(find.text('Wristload'), findsOneWidget);
 
@@ -180,10 +177,7 @@ void main() {
 
     final preferences = await SharedPreferences.getInstance();
     expect(preferences.getBool(OobeStore.key), isFalse);
-    expect(
-      preferences.getString(InstallPreferenceStore.key),
-      'both',
-    );
+    expect(preferences.getString(InstallPreferenceStore.key), 'both');
     expect(find.byType(OobePage), findsOneWidget);
     expect(find.text('欢迎使用 Wristload'), findsOneWidget);
     final navigator = tester.state<NavigatorState>(find.byType(Navigator));
@@ -195,18 +189,18 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     Future<void> pump(InstallPreference preference) => tester.pumpWidget(
-          MaterialApp(
-            theme: ThemeData(useMaterial3: true),
-            home: Scaffold(
-              body: Center(
-                child: SizedBox(
-                  width: 760,
-                  child: OobeInstallPreview(preference: preference),
-                ),
-              ),
+      MaterialApp(
+        theme: ThemeData(useMaterial3: true),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 760,
+              child: OobeInstallPreview(preference: preference),
             ),
           ),
-        );
+        ),
+      ),
+    );
 
     await pump(InstallPreference.watchface);
     await tester.pumpAndSettle();
@@ -216,9 +210,7 @@ void main() {
     var secondary = tester.getRect(
       find.byKey(const ValueKey('oobe-secondary-segment')),
     );
-    var menu = tester.getRect(
-      find.byKey(const ValueKey('oobe-menu-segment')),
-    );
+    var menu = tester.getRect(find.byKey(const ValueKey('oobe-menu-segment')));
     expect(secondary.width, 0);
     expect(menu.left - primary.right, moreOrLessEquals(2, epsilon: .1));
     expect(

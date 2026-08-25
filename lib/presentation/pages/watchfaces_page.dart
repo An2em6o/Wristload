@@ -349,7 +349,7 @@ class _WatchfaceCard extends StatelessWidget {
                     color: colors.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(Icons.watch, color: colors.primary),
+                  child: Icon(Icons.watch, color: colors.onSurface),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -483,7 +483,7 @@ class _WatchfaceEmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 56, color: colors.primary),
+          Icon(icon, size: 56, color: colors.onSurface),
           const SizedBox(height: 14),
           Text(title, style: theme.textTheme.titleLarge),
           const SizedBox(height: 6),

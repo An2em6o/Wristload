@@ -36,10 +36,10 @@ Widget _buildSettingsPage(WristloadPageContext context) => TransferSettingsPage(
   autoTimeSync: context.controller.autoTimeSync,
   forceWatchfaceInstall: context.controller.forceWatchfaceInstall,
   showForceWatchfaceInstall: defaultTargetPlatform == TargetPlatform.macOS,
-  autoConnectLastDevice: context.controller.autoConnectLastDeviceEnabled,
   floatingInstallWindowEnabled: context.floatingInstallWindowEnabled,
   autoOpenDiagnosticLog: context.autoOpenDiagnosticLog,
   themeSeedColor: context.themeSeedColor,
+  tianyiBlueUnlocked: context.tianyiBlueUnlocked,
   onThemeSeedChanged: context.onThemeSeedChanged,
   onConnectionModeChanged: context.controller.setConnectionMode,
   onSegmentIntervalChanged: context.controller.setSegmentIntervalMs,
@@ -51,8 +51,6 @@ Widget _buildSettingsPage(WristloadPageContext context) => TransferSettingsPage(
   onForceWatchfaceInstallChanged: defaultTargetPlatform == TargetPlatform.macOS
       ? context.controller.setForceWatchfaceInstall
       : null,
-  onAutoConnectLastDeviceChanged:
-      context.controller.setAutoConnectLastDeviceEnabled,
   onFloatingInstallWindowEnabledChanged:
       context.onFloatingInstallWindowEnabledChanged,
   onAutoOpenDiagnosticLogChanged: context.onAutoOpenDiagnosticLogChanged,
@@ -74,10 +72,10 @@ class TransferSettingsPage extends StatelessWidget {
     this.autoTimeSync = false,
     this.forceWatchfaceInstall = false,
     this.showForceWatchfaceInstall = false,
-    this.autoConnectLastDevice = true,
     this.floatingInstallWindowEnabled = false,
     this.autoOpenDiagnosticLog = false,
     this.themeSeedColor = const Color(0xFF6750A4),
+    this.tianyiBlueUnlocked = false,
     required this.onConnectionModeChanged,
     required this.onSegmentIntervalChanged,
     required this.onMassWindowSizeChanged,
@@ -85,7 +83,6 @@ class TransferSettingsPage extends StatelessWidget {
     this.onResourceInstallTargetPolicyChanged,
     this.onAutoTimeSyncChanged,
     this.onForceWatchfaceInstallChanged,
-    this.onAutoConnectLastDeviceChanged,
     this.onFloatingInstallWindowEnabledChanged,
     this.onAutoOpenDiagnosticLogChanged,
     this.onReplayOobe,
@@ -106,10 +103,10 @@ class TransferSettingsPage extends StatelessWidget {
   final bool autoTimeSync;
   final bool forceWatchfaceInstall;
   final bool showForceWatchfaceInstall;
-  final bool autoConnectLastDevice;
   final bool floatingInstallWindowEnabled;
   final bool autoOpenDiagnosticLog;
   final Color themeSeedColor;
+  final bool tianyiBlueUnlocked;
   final ValueChanged<ConnectionMode> onConnectionModeChanged;
   final ValueChanged<int> onSegmentIntervalChanged;
   final ValueChanged<int> onMassWindowSizeChanged;
@@ -118,7 +115,6 @@ class TransferSettingsPage extends StatelessWidget {
   onResourceInstallTargetPolicyChanged;
   final ValueChanged<bool>? onAutoTimeSyncChanged;
   final ValueChanged<bool>? onForceWatchfaceInstallChanged;
-  final ValueChanged<bool>? onAutoConnectLastDeviceChanged;
   final ValueChanged<bool>? onFloatingInstallWindowEnabledChanged;
   final ValueChanged<bool>? onAutoOpenDiagnosticLogChanged;
   final VoidCallback? onReplayOobe;
@@ -137,11 +133,10 @@ class TransferSettingsPage extends StatelessWidget {
           padding: const EdgeInsets.all(24),
           children: [
             Text('设置', style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 4),
-            Text('管理设备连接模式与传输参数。', style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 28),
+            const SizedBox(height: 24),
             ThemeColorSelector(
               value: themeSeedColor,
+              tianyiBlueUnlocked: tianyiBlueUnlocked,
               onChanged: onThemeSeedChanged,
             ),
             InstallPreferenceSelector(
@@ -161,7 +156,7 @@ class TransferSettingsPage extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 secondary: const Icon(Icons.delete_forever_outlined),
                 title: const Text('强制安装表盘'),
-                subtitle: const Text('安装之前删除同id表盘，然后安装新的表盘'),
+                subtitle: const Text('删除同 ID 表盘后安装'),
                 value: forceWatchfaceInstall,
                 onChanged: onForceWatchfaceInstallChanged,
               ),
@@ -171,29 +166,17 @@ class TransferSettingsPage extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               secondary: const Icon(Icons.sync),
               title: const Text('自动同步时间与时区'),
-              subtitle: const Text('连接成功后使用电脑当前的时间、时区和小时制同步设备'),
               value: autoTimeSync,
               onChanged: onAutoTimeSyncChanged,
             ),
             const Divider(height: 40),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              secondary: const Icon(Icons.power_settings_new_outlined),
-              title: const Text('启动时自动连接上次设备'),
-              subtitle: const Text('启动后自动连接最近一次完成鉴权的设备；关闭后可在主页历史设备区域手动连接。'),
-              value: autoConnectLastDevice,
-              onChanged: onAutoConnectLastDeviceChanged,
-            ),
-            const Divider(height: 40),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
               secondary: const Icon(Icons.picture_in_picture_alt_outlined),
               title: const Text('启用悬浮安装窗'),
-              subtitle: Text(
-                onFloatingInstallWindowEnabledChanged == null
-                    ? '悬浮安装窗目前仅支持 Windows。'
-                    : '可将文件直接拖入右下角悬浮窗安装。',
-              ),
+              subtitle: onFloatingInstallWindowEnabledChanged == null
+                  ? const Text('仅支持 Windows')
+                  : null,
               value: floatingInstallWindowEnabled,
               onChanged: onFloatingInstallWindowEnabledChanged == null
                   ? null
@@ -220,11 +203,9 @@ class TransferSettingsPage extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               secondary: const Icon(Icons.article_outlined),
               title: const Text('启动时自动打开诊断日志'),
-              subtitle: Text(
-                onAutoOpenDiagnosticLogChanged == null
-                    ? '诊断日志独立窗口目前仅支持 Windows 和 macOS。'
-                    : '下次启动 Wristload 时自动打开诊断日志独立窗口。',
-              ),
+              subtitle: onAutoOpenDiagnosticLogChanged == null
+                  ? const Text('仅支持 Windows 和 macOS')
+                  : null,
               value: autoOpenDiagnosticLog,
               onChanged: onAutoOpenDiagnosticLogChanged,
             ),
@@ -233,7 +214,6 @@ class TransferSettingsPage extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.replay_outlined),
               title: const Text('重新查看使用引导'),
-              subtitle: const Text('重置引导完成状态，并立即回到首次使用引导。'),
               trailing: const Icon(Icons.chevron_right),
               enabled: onReplayOobe != null,
               onTap: onReplayOobe,
@@ -243,7 +223,6 @@ class TransferSettingsPage extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.vpn_key_outlined),
               title: const Text('修改绑定设备 authkey'),
-              subtitle: const Text('查看历史绑定设备并修改 Wristload 当前使用的 authkey'),
               trailing: const Icon(Icons.chevron_right),
               enabled: onEditAuthKey != null,
               onTap: onEditAuthKey,
@@ -255,7 +234,6 @@ class TransferSettingsPage extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.inventory_2_outlined),
               title: const Text('RPK 安装包大小上限'),
-              subtitle: const Text('仅限制快应用 RPK 源文件；ZIP 解压、清单和资源安全检查仍然生效。'),
               trailing: Text(
                 '${(rpkMaxPackageBytes / (1024 * 1024)).round()} MB',
               ),
@@ -360,27 +338,16 @@ class _ResourceInstallTargetSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final automaticDevice = devices
-        .where((device) => device.id == policy.automaticDeviceId)
-        .firstOrNull;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('资源安装到所有设备？', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 4),
-        Text(
-          '多设备连接时安装资源的处理方式',
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-        ),
+        Text('安装目标', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
         RadioListTile<ResourceInstallTargetMode>(
           contentPadding: EdgeInsets.zero,
           value: ResourceInstallTargetMode.allConnected,
           groupValue: policy.mode,
-          title: const Text('为所有已连接的设备安装(可能会出现奇奇怪怪的bug)'),
+          title: const Text('所有已连接设备'),
           onChanged: onChanged == null
               ? null
               : (_) => unawaited(_requestAllConnectedEnable(context)),
@@ -389,33 +356,17 @@ class _ResourceInstallTargetSelector extends StatelessWidget {
           contentPadding: EdgeInsets.zero,
           value: ResourceInstallTargetMode.manual,
           groupValue: policy.mode,
-          title: const Text('关闭（我自己选择）'),
+          title: const Text('每次选择'),
           onChanged: onChanged == null
               ? null
               : (mode) => onChanged!(ResourceInstallTargetPolicy(mode: mode!)),
         ),
-        if (devices.isEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 16, top: 4),
-            child: Text(
-              '连接设备后可指定自动安装目标。',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-            ),
-          ),
         for (final device in devices)
           RadioListTile<ResourceInstallTargetMode>(
             contentPadding: EdgeInsets.zero,
             value: ResourceInstallTargetMode.automaticDevice,
             groupValue: policy.mode,
-            title: Text('自动为${device.name.isEmpty ? '已连接设备' : device.name}安装'),
-            subtitle:
-                automaticDevice != null &&
-                    policy.mode == ResourceInstallTargetMode.automaticDevice &&
-                    automaticDevice.id == device.id
-                ? const Text('当前自动安装目标')
-                : null,
+            title: Text(device.name.isEmpty ? '已连接设备' : device.name),
             onChanged: onChanged == null
                 ? null
                 : (_) => onChanged!(
@@ -492,8 +443,7 @@ class _AllConnectedInstallWarningDialogState
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final enabled = _remainingSeconds == 0;
-    final countdownWarning =
-        '经过测试，启用了该功能会触发各式各样的bug。该功能不建议开启。如需开启，等到$_remainingSeconds秒后则可开启';
+    final countdownWarning = '多设备安装存在兼容性风险。$_remainingSeconds 秒后可确认。';
 
     return AlertDialog(
       icon: Icon(Icons.warning_amber_rounded, color: colors.error),
@@ -502,7 +452,7 @@ class _AllConnectedInstallWarningDialogState
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('开启后，拖入资源将会给所有已连接的设备安装。这可能会导致兼容性问题。'),
+          const Text('同一资源可能与部分设备不兼容。'),
           const SizedBox(height: 12),
           Text(
             countdownWarning,
@@ -527,9 +477,15 @@ class _AllConnectedInstallWarningDialogState
 }
 
 class ThemeColorSelector extends StatelessWidget {
-  const ThemeColorSelector({required this.value, this.onChanged, super.key});
+  const ThemeColorSelector({
+    required this.value,
+    this.tianyiBlueUnlocked = false,
+    this.onChanged,
+    super.key,
+  });
 
   final Color value;
+  final bool tianyiBlueUnlocked;
   final ValueChanged<Color>? onChanged;
 
   static const _choices = <({String name, Color color})>[
@@ -543,26 +499,25 @@ class ThemeColorSelector extends StatelessWidget {
     (name: '金', color: Color(0xFFD4A017)),
   ];
 
+  static const _tianyiBlueChoice = (name: '天依蓝', color: Color(0xFF66CCFF));
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final choices = <({String name, Color color})>[
+      ..._choices,
+      if (tianyiBlueUnlocked) _tianyiBlueChoice,
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('主题色', style: theme.textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Text(
-          '更换全应用的强调色，浅色与深色主题都会生效；选择即时保存。',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
-        ),
         const SizedBox(height: 16),
         Wrap(
           spacing: 14,
           runSpacing: 12,
-          children: _choices
+          children: choices
               .map(
                 (choice) => _ThemeColorChoice(
                   name: choice.name,
@@ -578,10 +533,10 @@ class ThemeColorSelector extends StatelessWidget {
         const SizedBox(height: 20),
         _ThemeColorPreview(
           colors: colors,
-          themeName: _choices
+          themeName: choices
               .firstWhere(
                 (choice) => choice.color.toARGB32() == value.toARGB32(),
-                orElse: () => _choices.first,
+                orElse: () => choices.first,
               )
               .name,
         ),

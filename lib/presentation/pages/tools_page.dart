@@ -23,6 +23,7 @@ const wristloadPage = WristloadPageModule(
 
 Widget _buildToolsPage(WristloadPageContext context) =>
     ToolsPage(controller: context.controller);
+
 class ToolsPage extends StatefulWidget {
   const ToolsPage({required this.controller, super.key});
 
@@ -55,8 +56,9 @@ class _ToolsPageState extends State<ToolsPage> {
   }
 
   Future<void> _pickZip() async {
-    final result =
-        await ScopedFilePicker.pickFiles(allowedExtensions: const ['zip']);
+    final result = await ScopedFilePicker.pickFiles(
+      allowedExtensions: const ['zip'],
+    );
     if (!mounted || result == null || result.isEmpty) return;
     appLogger.info(
       '工具页 ZIP 文件已选择',
@@ -100,7 +102,9 @@ class _ToolsPageState extends State<ToolsPage> {
         appLogger.error(
           '工具文件访问权限释放失败',
           category: DiagnosticLogCategory.security,
-          fields: <String, Object?>{'errorType': cleanupError.runtimeType.toString()},
+          fields: <String, Object?>{
+            'errorType': cleanupError.runtimeType.toString(),
+          },
         );
       }
     }
@@ -151,8 +155,9 @@ class _ToolsPageState extends State<ToolsPage> {
     }
     await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('已复制')));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已复制')));
   }
 
   Future<void> _applyAuthKey() async {
@@ -175,11 +180,7 @@ class _ToolsPageState extends State<ToolsPage> {
     final mac = _macController.text.trim().toUpperCase();
     if (sn.length < 4 || !_macPattern.hasMatch(mac)) return;
     setState(() {
-      _unlockCode = computeUnlockCode(
-        sn,
-        mac,
-        algorithm: _unlockAlgorithm,
-      );
+      _unlockCode = computeUnlockCode(sn, mac, algorithm: _unlockAlgorithm);
     });
   }
 
@@ -187,7 +188,8 @@ class _ToolsPageState extends State<ToolsPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final key = _authKey;
-    final validUnlockInput = _snController.text.trim().length >= 4 &&
+    final validUnlockInput =
+        _snController.text.trim().length >= 4 &&
         _macPattern.hasMatch(_macController.text);
     return Align(
       alignment: Alignment.topCenter,
@@ -201,7 +203,6 @@ class _ToolsPageState extends State<ToolsPage> {
             _ToolCard(
               icon: Icons.vpn_key,
               title: 'authkey 提取',
-              description: '从小米运动健康导出的日志 .zip 中解析设备 authkey',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -210,7 +211,8 @@ class _ToolsPageState extends State<ToolsPage> {
                     borderRadius: BorderRadius.circular(12),
                     child: CustomPaint(
                       painter: _DashedBorderPainter(
-                          color: theme.colorScheme.outline),
+                        color: theme.colorScheme.outline,
+                      ),
                       child: Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(20),
@@ -219,7 +221,7 @@ class _ToolsPageState extends State<ToolsPage> {
                                 children: [
                                   Icon(Icons.upload_file, size: 30),
                                   SizedBox(height: 8),
-                                  Text('点击选择 .zip 日志文件'),
+                                  Text('选择 .zip 日志'),
                                 ],
                               )
                             : Row(
@@ -235,8 +237,9 @@ class _ToolsPageState extends State<ToolsPage> {
                                   if (_zipFileSize case final size?)
                                     Text(_formatSize(size)),
                                   TextButton(
-                                      onPressed: _pickZip,
-                                      child: const Text('重新选择')),
+                                    onPressed: _pickZip,
+                                    child: const Text('重新选择'),
+                                  ),
                                 ],
                               ),
                       ),
@@ -258,12 +261,14 @@ class _ToolsPageState extends State<ToolsPage> {
                   if (_authError case final error?)
                     Padding(
                       padding: const EdgeInsets.only(top: 10),
-                      child: Text(error,
-                          style: TextStyle(color: theme.colorScheme.error)),
+                      child: Text(
+                        error,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
                     ),
                   if (_authKeyCandidates.isNotEmpty) ...[
                     const SizedBox(height: 12),
-                    const Text('Found authkeys. Select the matching device key:'),
+                    Text('找到 ${_authKeyCandidates.length} 个 authkey'),
                     for (final candidate in _authKeyCandidates)
                       RadioListTile<String>(
                         value: candidate.key,
@@ -273,11 +278,14 @@ class _ToolsPageState extends State<ToolsPage> {
                           _authKeyRevealed = false;
                         }),
                         title: Text(candidate.productName ?? 'Unknown device'),
-                        subtitle: Text([
-                          if (candidate.mac != null) candidate.mac!,
-                          if (candidate.sourcePath != null) candidate.sourcePath!,
-                          '${candidate.key.substring(0, 4)}******${candidate.key.substring(candidate.key.length - 4)}',
-                        ].join(' | ')),
+                        subtitle: Text(
+                          [
+                            if (candidate.mac != null) candidate.mac!,
+                            if (candidate.sourcePath != null)
+                              candidate.sourcePath!,
+                            '${candidate.key.substring(0, 4)}******${candidate.key.substring(candidate.key.length - 4)}',
+                          ].join(' | '),
+                        ),
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                       ),
@@ -287,7 +295,9 @@ class _ToolsPageState extends State<ToolsPage> {
                     Container(
                       color: theme.colorScheme.surfaceContainerLowest,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 4),
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
                       child: Row(
                         children: [
                           Expanded(
@@ -323,7 +333,6 @@ class _ToolsPageState extends State<ToolsPage> {
             _ToolCard(
               icon: Icons.lock_open,
               title: '解锁码计算',
-              description: '根据设备 SN 码与 MAC 地址计算解锁码',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -333,7 +342,9 @@ class _ToolsPageState extends State<ToolsPage> {
                         controller: _snController,
                         onChanged: (_) => setState(() {}),
                         decoration: const InputDecoration(
-                            labelText: 'SN 码', border: OutlineInputBorder()),
+                          labelText: 'SN 码',
+                          border: OutlineInputBorder(),
+                        ),
                       );
                       final mac = TextField(
                         controller: _macController,
@@ -347,12 +358,15 @@ class _ToolsPageState extends State<ToolsPage> {
                       );
                       return constraints.maxWidth < 620
                           ? Column(
-                              children: [sn, const SizedBox(height: 12), mac])
-                          : Row(children: [
-                              Expanded(child: sn),
-                              const SizedBox(width: 12),
-                              Expanded(child: mac)
-                            ]);
+                              children: [sn, const SizedBox(height: 12), mac],
+                            )
+                          : Row(
+                              children: [
+                                Expanded(child: sn),
+                                const SizedBox(width: 12),
+                                Expanded(child: mac),
+                              ],
+                            );
                     },
                   ),
                   const SizedBox(height: 12),
@@ -389,8 +403,9 @@ class _ToolsPageState extends State<ToolsPage> {
                     child: Text(
                       // '在您计算解锁码之前，我们强烈建议您先尝试使用连续插拔设备充电器百余次的方法让设备重启三次触发保护恢复出厂设置这种更便捷的方法删除密码。' //一点都错
                       '警告！在输入正确解锁码之后，你的设备会直接被清空所有设置，恢复出厂。',
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(color: theme.colorScheme.onErrorContainer),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -405,8 +420,9 @@ class _ToolsPageState extends State<ToolsPage> {
                       children: [
                         SelectableText(
                           '${code.substring(0, 4)} ${code.substring(4)}',
-                          style: theme.textTheme.headlineMedium
-                              ?.copyWith(fontFamily: 'monospace'),
+                          style: theme.textTheme.headlineMedium?.copyWith(
+                            fontFamily: 'monospace',
+                          ),
                         ),
                         IconButton(
                           tooltip: '复制解锁码',
@@ -430,13 +446,11 @@ class _ToolCard extends StatelessWidget {
   const _ToolCard({
     required this.icon,
     required this.title,
-    required this.description,
     required this.child,
   });
 
   final IconData icon;
   final String title;
-  final String description;
   final Widget child;
 
   @override
@@ -459,16 +473,13 @@ class _ToolCard extends StatelessWidget {
                     color: theme.colorScheme.surfaceContainerHigh,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(icon, color: theme.colorScheme.primary),
+                  child: Icon(icon, color: theme.colorScheme.onSurface),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: theme.textTheme.titleMedium),
-                      Text(description, style: theme.textTheme.bodySmall),
-                    ],
+                    children: [Text(title, style: theme.textTheme.titleMedium)],
                   ),
                 ),
               ],
@@ -493,13 +504,15 @@ class _DashedBorderPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
     final path = Path()
-      ..addRRect(RRect.fromRectAndRadius(
-          Offset.zero & size, const Radius.circular(12)));
+      ..addRRect(
+        RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(12)),
+      );
     for (final metric in path.computeMetrics()) {
       for (var offset = 0.0; offset < metric.length; offset += 10) {
         canvas.drawPath(
-            metric.extractPath(offset, (offset + 6).clamp(0, metric.length)),
-            paint);
+          metric.extractPath(offset, (offset + 6).clamp(0, metric.length)),
+          paint,
+        );
       }
     }
   }
@@ -514,18 +527,25 @@ class _MacAddressFormatter extends TextInputFormatter {
 
   @override
   TextEditingValue formatEditUpdate(
-      TextEditingValue oldValue, TextEditingValue newValue) {
-    final hex =
-        newValue.text.toUpperCase().replaceAll(RegExp(r'[^0-9A-F]'), '');
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final hex = newValue.text.toUpperCase().replaceAll(
+      RegExp(r'[^0-9A-F]'),
+      '',
+    );
     final clipped = hex.substring(0, hex.length.clamp(0, 12));
     final groups = <String>[];
     for (var index = 0; index < clipped.length; index += 2) {
-      groups
-          .add(clipped.substring(index, (index + 2).clamp(0, clipped.length)));
+      groups.add(
+        clipped.substring(index, (index + 2).clamp(0, clipped.length)),
+      );
     }
     final text = groups.join(':');
     return TextEditingValue(
-        text: text, selection: TextSelection.collapsed(offset: text.length));
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
   }
 }
 

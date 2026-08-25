@@ -28,19 +28,22 @@ extension BluetoothAuthorizationStatusX on BluetoothAuthorizationStatus {
       this == BluetoothAuthorizationStatus.restricted;
 }
 
-/// A native RFCOMM payload paired with the CoreBluetooth identity that owns
-/// the channel. macOS uses this tag to keep one watch's protocol frames out of
-/// another watch's authenticated session.
+/// A native RFCOMM payload tagged with the identity that owns the channel.
+/// macOS uses the CoreBluetooth peripheral ID and native generation; Windows
+/// uses the 48-bit Bluetooth address. This keeps one watch's protocol frames
+/// out of another watch's authenticated session.
 class RfcommDataEvent {
   const RfcommDataEvent({
     required this.data,
     this.peripheralId,
     this.generation,
+    this.address,
   });
 
   final Uint8List data;
   final String? peripheralId;
   final int? generation;
+  final int? address;
 }
 
 /// A per-device RFCOMM close notification from the macOS native bridge.
@@ -908,17 +911,23 @@ class BleTransport {
   Stream<RfcommClosedEvent> get rfcommClosedEvents =>
       _rfcommClosedEventController.stream;
 
-  /// Selects exactly one macOS RFCOMM channel. The macOS native bridge always
-  /// tags its events with the owning CoreBluetooth identity. Keep that routing
-  /// contract stable from subscription time: falling back to [rfcommData]
-  /// before the EventChannel has started would let a later second device's
-  /// packet enter the first device's authenticated session.
-  ///
-  /// Other platforms retain their established single-stream behavior until
-  /// their native transports expose a comparable device identity.
+  /// Selects exactly one device's RFCOMM channel. macOS routes by its opaque
+  /// CoreBluetooth identity and native generation; Windows routes by the MAC
+  /// address included in every Pigeon callback. Android retains the established
+  /// single-stream behavior.
   Stream<Uint8List> rfcommDataFor(UUID uuid) {
-    if (!_isMacOS) return rfcommData;
     final requested = uuid.toString().trim().toLowerCase();
+    if (_isWindows) {
+      final compact = uuid.toString().replaceAll('-', '');
+      if (compact.length < 12) return const Stream<Uint8List>.empty();
+      final hex = compact.substring(compact.length - 12);
+      final address = int.tryParse(hex, radix: 16);
+      if (address == null) return const Stream<Uint8List>.empty();
+      return _rfcommDataEventController.stream
+          .where((event) => event.address == address)
+          .map((event) => event.data);
+    }
+    if (!_isMacOS) return rfcommData;
     return _rfcommDataEventController.stream
         .where(
           (event) =>
@@ -952,6 +961,7 @@ class BleTransport {
   );
   bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
   bool get _isMacOS => defaultTargetPlatform == TargetPlatform.macOS;
+  bool get _isWindows => defaultTargetPlatform == TargetPlatform.windows;
 
   BluetoothAuthorizationStatus _parseMacOSBluetoothAuthorization(
     Object? reply,
@@ -1240,6 +1250,12 @@ class BleTransport {
     channel.setMessageHandler((message) async {
       final args = message as List<Object?>?;
       if (args == null || args.length < 2) return null;
+      final rawAddress = args[0];
+      final address = rawAddress is int
+          ? rawAddress
+          : rawAddress is num
+          ? rawAddress.toInt()
+          : int.tryParse(rawAddress?.toString() ?? '');
       final data = args[1];
       if (data is Uint8List && !_rfcommDataController.isClosed) {
         _trace(
@@ -1247,6 +1263,7 @@ class BleTransport {
           fields: <String, Object?>{
             'bytes': data.length,
             'platform': 'windows',
+            if (address != null) 'address': _formatBluetoothAddress(address),
             'transport': 'RFCOMM/SPP',
             'direction': 'RX',
             'wireHex': _wireHex(data),
@@ -1254,7 +1271,9 @@ class BleTransport {
         );
         _rfcommDataController.add(data);
         if (!_rfcommDataEventController.isClosed) {
-          _rfcommDataEventController.add(RfcommDataEvent(data: data));
+          _rfcommDataEventController.add(
+            RfcommDataEvent(data: data, address: address),
+          );
         }
       }
       return null;

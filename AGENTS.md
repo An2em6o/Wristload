@@ -32,6 +32,13 @@ This file is part of the repository and MUST be committed to Git. Read it before
 4. Run static checks appropriate to the change, but do not run `flutter build`, `flutter test`, `flutter analyze`, packaging scripts, or launch the application unless the user explicitly requests it. The user normally performs compilation and testing.
 5. Report changed files, static checks performed, and any remaining limitation.
 
+## UI Copy Discipline
+
+- UI text must represent a real user-facing state, data value, error, warning, or executable action. Do not add explanatory, promotional, instructional, or feature-introduction copy merely to describe how an interface works.
+- Do not add meaningless metadata, decorative labels, duplicated status, or implementation terms that do not help the user complete the current task.
+- Prefer clear labels such as device names, connection state, current target, and action names. Express behavior through layout, state, and interaction rather than sentences such as "this action only affects the current device".
+- Apply this rule to all newly created or edited Flutter UI, HTML demonstrations, dialogs, settings, and tooltips. Existing copy may be changed only when it is in the scope of the requested UI work.
+
 ## Repository boundaries
 
 - `lib/application/`: application orchestration and lifecycle.

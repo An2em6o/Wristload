@@ -37,10 +37,10 @@ class FloatingWindowCoordinator with WindowListener {
     this.onOpenMainWindow,
     this.onExitRequested,
     Color Function()? themeSeedProvider,
-  })  : _preferences = preferences ?? FloatingWindowPreferences(),
-        _importer = importer ?? QueueFileImporter(),
-        _themeSeedProvider =
-            themeSeedProvider ?? (() => ThemeController.defaultSeedColor);
+  }) : _preferences = preferences ?? FloatingWindowPreferences(),
+       _importer = importer ?? QueueFileImporter(),
+       _themeSeedProvider =
+           themeSeedProvider ?? (() => ThemeController.defaultSeedColor);
 
   final DeviceController controller;
   final FloatingWindowPreferences _preferences;
@@ -213,7 +213,8 @@ class FloatingWindowCoordinator with WindowListener {
         return true;
       default:
         throw MissingPluginException(
-            'Unknown floating-window call: ${call.method}');
+          'Unknown floating-window call: ${call.method}',
+        );
     }
   }
 
@@ -264,7 +265,7 @@ class FloatingWindowCoordinator with WindowListener {
     final path = arguments is Map ? arguments['path'] as String? : null;
     for (final entry in controller.installQueue.reversed) {
       if (entry.canRetry &&
-        (path == null || _samePath(entry.request.path, path))) {
+          (path == null || _samePath(entry.request.path, path))) {
         appLogger.info(
           '浮动安装窗口重试队列项',
           category: DiagnosticLogCategory.installation,
@@ -400,10 +401,7 @@ class FloatingWindowCoordinator with WindowListener {
 
   Future<void> _initializeTray() async {
     final iconPath = _trayIconPath();
-    await _systemTray.initSystemTray(
-      iconPath: iconPath,
-      toolTip: 'Wristload',
-    );
+    await _systemTray.initSystemTray(iconPath: iconPath, toolTip: 'Wristload');
     final menu = Menu();
     await menu.buildFrom([
       MenuItemLabel(
@@ -454,13 +452,53 @@ class FloatingWindowCoordinator with WindowListener {
     if (_exiting) return;
     _exiting = true;
     appLogger.info('浮动安装窗口退出开始', category: DiagnosticLogCategory.ui);
-    await _invokeFloating('destroy', null);
-    if (_trayReady) {
-      await _systemTray.destroy();
-      _trayReady = false;
+
+    // Remove the visible main window immediately. Windows can otherwise mark
+    // it as unresponsive while native Bluetooth and child-window plugins are
+    // performing their best-effort shutdown.
+    try {
+      await windowManager.hide().timeout(const Duration(milliseconds: 300));
+    } on Object {
+      // Continue exiting even if the window plugin is already shutting down.
     }
-    if (onExitRequested != null) {
-      await onExitRequested!.call();
+
+    // Start the authoritative application exit immediately. Child-window and
+    // tray cleanup below must never delay or prevent it.
+    final applicationExit = onExitRequested == null
+        ? null
+        : Future<void>.sync(() async => onExitRequested!.call());
+
+    final cleanupTasks = <Future<void>>[
+      _invokeFloating('destroy', null)
+          .timeout(const Duration(milliseconds: 500), onTimeout: () {})
+          .catchError((_) {}),
+      if (_trayReady)
+        _systemTray
+            .destroy()
+            .timeout(const Duration(milliseconds: 500), onTimeout: () {})
+            .catchError((_) {}),
+    ];
+    await Future.wait(cleanupTasks).timeout(
+      const Duration(milliseconds: 600),
+      onTimeout: () => const <void>[],
+    );
+    _floatingReady = false;
+    _floatingWindow = null;
+    _trayReady = false;
+    if (_initialized) {
+      controller.removeListener(_publishSnapshot);
+      windowManager.removeListener(this);
+      try {
+        await _channel
+            .setMethodCallHandler(null)
+            .timeout(const Duration(milliseconds: 200));
+      } on Object {
+        // The engine may already be terminating.
+      }
+      _initialized = false;
+    }
+    if (applicationExit != null) {
+      await applicationExit;
     } else {
       await windowManager.setPreventClose(false);
       await windowManager.destroy();
@@ -488,8 +526,7 @@ class FloatingWindowCoordinator with WindowListener {
     // window may keep the process alive only while the floating window feature
     // is enabled.
     if (!_enabled || !_trayReady) {
-      _exiting = true;
-      unawaited(_destroyMainWindow());
+      unawaited(_exitApplication());
       return;
     }
     appLogger.info('主窗口关闭请求转为托盘隐藏', category: DiagnosticLogCategory.ui);
@@ -497,11 +534,6 @@ class FloatingWindowCoordinator with WindowListener {
     // leave the auxiliary window available.
     unawaited(windowManager.hide());
     if (_enabled) unawaited(showFloatingWindow());
-  }
-
-  Future<void> _destroyMainWindow() async {
-    await windowManager.setPreventClose(false);
-    await windowManager.destroy();
   }
 
   Future<void> dispose() async {
@@ -534,27 +566,31 @@ class FloatingWindowImportNotice {
   final int failureCount;
 
   Map<String, Object> toJson() => {
-        'addedCount': addedCount,
-        'duplicateCount': duplicateCount,
-        'unsupportedCount': unsupportedCount,
-        'failureCount': failureCount,
-      };
+    'addedCount': addedCount,
+    'duplicateCount': duplicateCount,
+    'unsupportedCount': unsupportedCount,
+    'failureCount': failureCount,
+  };
 }
 
 List<ScopedFileRef> _fileRefs(Object? value) {
   if (value is Map) value = value['files'] ?? value['paths'];
   if (value is! List) return const [];
-  return value.map((item) {
-    if (item is String) return ScopedFileRef(path: item);
-    if (item is Map && item['path'] is String) {
-      final bookmark = item['bookmark'];
-      return ScopedFileRef(
-        path: item['path'] as String,
-        bookmark: bookmark is Uint8List ? bookmark : null,
-      );
-    }
-    return null;
-  }).whereType<ScopedFileRef>().where((file) => file.path.isNotEmpty).toList();
+  return value
+      .map((item) {
+        if (item is String) return ScopedFileRef(path: item);
+        if (item is Map && item['path'] is String) {
+          final bookmark = item['bookmark'];
+          return ScopedFileRef(
+            path: item['path'] as String,
+            bookmark: bookmark is Uint8List ? bookmark : null,
+          );
+        }
+        return null;
+      })
+      .whereType<ScopedFileRef>()
+      .where((file) => file.path.isNotEmpty)
+      .toList();
 }
 
 bool _samePath(String a, String b) =>
