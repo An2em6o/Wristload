@@ -158,6 +158,7 @@ final class MacOSPlatformBridge: NSObject, FlutterStreamHandler {
   private let rfcommEventChannel: FlutterEventChannel
   private let securityScopeChannel: FlutterMethodChannel
   private let bluetoothPermissionChannel: FlutterMethodChannel
+  private let notificationChannel: FlutterMethodChannel
   private let bluetoothPermissionService = MacOSBluetoothPermissionService()
   private let rfcommTransport = MacOSRFCOMMTransport()
   private var rfcommEventSink: FlutterEventSink?
@@ -190,6 +191,10 @@ final class MacOSPlatformBridge: NSObject, FlutterStreamHandler {
       name: "wristload/bluetooth_permission",
       binaryMessenger: binaryMessenger
     )
+    notificationChannel = FlutterMethodChannel(
+      name: "wristload/macos_notifications",
+      binaryMessenger: binaryMessenger
+    )
     super.init()
 
     secureStoreChannel.setMethodCallHandler { [weak self] call, result in
@@ -207,6 +212,9 @@ final class MacOSPlatformBridge: NSObject, FlutterStreamHandler {
     }
     bluetoothPermissionChannel.setMethodCallHandler { [weak self] call, result in
       self?.handleBluetoothPermission(call, result: result)
+    }
+    notificationChannel.setMethodCallHandler { [weak self] call, result in
+      self?.handleNotification(call, result: result)
     }
 
     rfcommTransport.onData = { [weak self] peripheralID, data, generation in
@@ -246,6 +254,7 @@ final class MacOSPlatformBridge: NSObject, FlutterStreamHandler {
     rfcommEventChannel.setStreamHandler(nil)
     securityScopeChannel.setMethodCallHandler(nil)
     bluetoothPermissionChannel.setMethodCallHandler(nil)
+    notificationChannel.setMethodCallHandler(nil)
     bluetoothPermissionService.invalidate()
     for (_, url) in securityScopeURLs { url.stopAccessingSecurityScopedResource() }
     rfcommTransport.disconnectAll()
@@ -268,6 +277,33 @@ final class MacOSPlatformBridge: NSObject, FlutterStreamHandler {
       bluetoothPermissionService.openBluetoothPrivacySettings(completion: result)
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func handleNotification(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    guard call.method == "show" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    guard let arguments = call.arguments as? [String: Any],
+          let title = arguments["title"] as? String,
+          let body = arguments["body"] as? String else {
+      result(FlutterError(
+        code: "macos_notifications",
+        message: "Missing notification arguments.",
+        details: nil
+      ))
+      return
+    }
+    DispatchQueue.main.async {
+      let notification = NSUserNotification()
+      notification.title = title
+      notification.informativeText = body
+      NSUserNotificationCenter.default.deliver(notification)
+      result(nil)
     }
   }
 

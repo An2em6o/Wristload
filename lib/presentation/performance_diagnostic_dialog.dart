@@ -121,7 +121,7 @@ class _PerformanceDiagnosticDialogState
                       child: SingleChildScrollView(
                         child: SelectableText(
                           _selected?.text ??
-                              '监控会在内存连续三次超过 600 MiB，或检测到异常慢帧时自动生成报告，并调用 Windows 系统通知。',
+                              '监控会在内存连续三次超过 600 MiB，或检测到异常慢帧时自动生成报告并发送系统通知。',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(fontFamily: 'monospace', height: 1.5),
                         ),

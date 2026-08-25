@@ -361,7 +361,7 @@ class PerformanceDiagnosticService extends ChangeNotifier {
       fields: <String, Object?>{'trigger': trigger, 'reportId': id},
     );
     if (_disposed || !_started) return;
-    await _showWindowsNotification(
+    await _showDesktopNotification(
       trigger == 'memory' ? '内存占用异常' : '界面卡顿异常',
       '已生成性能诊断报告，可在“关于”页面查看。',
     );
@@ -456,18 +456,21 @@ class PerformanceDiagnosticService extends ChangeNotifier {
     }
   }
 
-  Future<void> _showWindowsNotification(String title, String body) async {
-    if (!Platform.isWindows) return;
+  Future<void> _showDesktopNotification(String title, String body) async {
+    final channelName = switch (Platform.operatingSystem) {
+      'windows' => 'wristload/windows_notifications',
+      'macos' => 'wristload/macos_notifications',
+      _ => null,
+    };
+    if (channelName == null) return;
     try {
-      await const MethodChannel(
-        'wristload/windows_notifications',
-      ).invokeMethod<void>('show', <String, String>{
-        'title': title,
-        'body': body,
-      });
+      await MethodChannel(channelName).invokeMethod<void>(
+        'show',
+        <String, String>{'title': title, 'body': body},
+      );
     } on Object catch (error) {
       appLogger.warning(
-        'Windows performance notification failed',
+        'Desktop performance notification failed',
         category: DiagnosticLogCategory.ui,
         fields: <String, Object?>{'errorType': error.runtimeType.toString()},
       );
