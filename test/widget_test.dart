@@ -712,7 +712,7 @@ void main() {
       matching: find.byType(SwitchListTile),
     );
     expect(tester.widget<SwitchListTile>(tileFinder).onChanged, isNull);
-    expect(find.text('悬浮安装窗目前仅支持 Windows。'), findsOneWidget);
+    expect(find.text('仅支持 Windows 和 macOS'), findsOneWidget);
   });
 
   testWidgets('Split Button 主区跟随偏好并复用安装回调', (tester) async {

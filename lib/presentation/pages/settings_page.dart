@@ -172,7 +172,7 @@ class TransferSettingsPage extends StatelessWidget {
               secondary: const Icon(Icons.picture_in_picture_alt_outlined),
               title: const Text('启用悬浮安装窗'),
               subtitle: onFloatingInstallWindowEnabledChanged == null
-                  ? const Text('仅支持 Windows')
+                  ? const Text('仅支持 Windows 和 macOS')
                   : null,
               value: floatingInstallWindowEnabled,
               onChanged: onFloatingInstallWindowEnabledChanged == null

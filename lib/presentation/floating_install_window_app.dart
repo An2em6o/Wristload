@@ -13,7 +13,7 @@ import '../platform/security_scoped_file_access.dart';
 import 'app_theme.dart';
 import 'floating_install_window.dart';
 
-/// Secondary-engine host for the compact Windows installation window.
+/// Secondary-engine host for the compact desktop installation window.
 class FloatingInstallWindowApp extends StatefulWidget {
   const FloatingInstallWindowApp({super.key});
 

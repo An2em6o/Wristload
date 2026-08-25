@@ -58,10 +58,10 @@ Future<void> main(List<String> args) async {
       runApp(const DiagnosticLogWindowApp());
       return;
     }
-    if (Platform.isWindows) {
+    if (Platform.isWindows || Platform.isMacOS) {
       await windowManager.setPreventClose(true);
     }
-    if (Platform.isWindows &&
+    if ((Platform.isWindows || Platform.isMacOS) &&
         currentWindow.arguments == floatingInstallWindowArgument) {
       appLogger.info(
         'floating install window engine started',
@@ -106,7 +106,7 @@ Future<void> main(List<String> args) async {
   );
   runApp(
     WristloadApp(
-      desktopIntegrationEnabled: Platform.isWindows,
+      desktopIntegrationEnabled: Platform.isWindows || Platform.isMacOS,
       initialOobeCompleted: startupValues[0] as bool,
       initialPreference: startupValues[1] as InstallPreference,
       initialThemeSeedColor: initialThemeSeedColor,
@@ -457,12 +457,12 @@ class _WristloadAppState extends State<WristloadApp>
     _exitCleanupStarted = true;
     controller.queueInstallPreparer = null;
     appLogger.info(
-      'Windows application shutdown started',
+      'Desktop application shutdown started',
       category: DiagnosticLogCategory.runtime,
     );
 
-    // A visible window that waits for plugin cleanup is reported by Windows as
-    // "not responding". Hide it first, then keep all native cleanup bounded.
+    // Hide the visible window before bounded native cleanup so the desktop
+    // shell does not leave an unresponsive window on screen during shutdown.
     try {
       await windowManager.hide().timeout(const Duration(milliseconds: 300));
     } on Object {

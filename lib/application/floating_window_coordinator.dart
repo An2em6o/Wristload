@@ -79,7 +79,7 @@ class FloatingWindowCoordinator with WindowListener {
   }
 
   Future<void> initialize() async {
-    if (_initialized || !Platform.isWindows) {
+    if (_initialized || !_isSupportedDesktop) {
       appLogger.debug(
         '浮动安装窗口初始化跳过',
         category: DiagnosticLogCategory.ui,
@@ -120,7 +120,7 @@ class FloatingWindowCoordinator with WindowListener {
   }
 
   Future<void> setEnabled(bool enabled) async {
-    if (!Platform.isWindows) {
+    if (!_isSupportedDesktop) {
       appLogger.debug(
         '浮动安装窗口设置在当前平台不可用',
         category: DiagnosticLogCategory.ui,
@@ -431,21 +431,37 @@ class FloatingWindowCoordinator with WindowListener {
   }
 
   String _trayIconPath() {
+    if (Platform.isMacOS) {
+      return _flutterAssetPath(
+        'macos${Platform.pathSeparator}Runner${Platform.pathSeparator}'
+        'Assets.xcassets${Platform.pathSeparator}AppIcon.appiconset'
+        '${Platform.pathSeparator}app_icon_32.png',
+      );
+    }
+    return _flutterAssetPath(
+      'windows${Platform.pathSeparator}runner${Platform.pathSeparator}'
+      'resources${Platform.pathSeparator}app_icon.ico',
+    );
+  }
+
+  String _flutterAssetPath(String relativePath) {
     final executableDir = File(Platform.resolvedExecutable).parent.path;
-    final bundled =
-        '$executableDir${Platform.pathSeparator}data${Platform.pathSeparator}'
-        'flutter_assets${Platform.pathSeparator}windows${Platform.pathSeparator}'
-        'runner${Platform.pathSeparator}resources${Platform.pathSeparator}'
-        'app_icon.ico';
-    if (File(bundled).existsSync()) return bundled;
+    final bundledCandidates = <String>[
+      if (Platform.isMacOS)
+        '$executableDir${Platform.pathSeparator}..${Platform.pathSeparator}'
+            'Frameworks${Platform.pathSeparator}App.framework'
+            '${Platform.pathSeparator}Resources${Platform.pathSeparator}'
+            'flutter_assets${Platform.pathSeparator}$relativePath',
+      '$executableDir${Platform.pathSeparator}data${Platform.pathSeparator}'
+          'flutter_assets${Platform.pathSeparator}$relativePath',
+    ];
+    for (final bundled in bundledCandidates) {
+      if (File(bundled).existsSync()) return bundled;
+    }
 
     // Debug launches run from the project directory, where the source asset
     // remains available even before a build copies Flutter assets.
-    final source =
-        '${Directory.current.path}${Platform.pathSeparator}windows${Platform.pathSeparator}'
-        'runner${Platform.pathSeparator}resources${Platform.pathSeparator}'
-        'app_icon.ico';
-    return source;
+    return '${Directory.current.path}${Platform.pathSeparator}$relativePath';
   }
 
   Future<void> _exitApplication() async {
@@ -453,9 +469,8 @@ class FloatingWindowCoordinator with WindowListener {
     _exiting = true;
     appLogger.info('浮动安装窗口退出开始', category: DiagnosticLogCategory.ui);
 
-    // Remove the visible main window immediately. Windows can otherwise mark
-    // it as unresponsive while native Bluetooth and child-window plugins are
-    // performing their best-effort shutdown.
+    // Remove the visible main window immediately while native resources and
+    // child windows perform their bounded best-effort shutdown.
     try {
       await windowManager.hide().timeout(const Duration(milliseconds: 300));
     } on Object {
@@ -595,3 +610,5 @@ List<ScopedFileRef> _fileRefs(Object? value) {
 
 bool _samePath(String a, String b) =>
     QueueFileImporter.normalizePath(a) == QueueFileImporter.normalizePath(b);
+
+bool get _isSupportedDesktop => Platform.isWindows || Platform.isMacOS;

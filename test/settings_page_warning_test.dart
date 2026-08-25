@@ -8,8 +8,8 @@ import 'package:wristload/application/device_controller.dart';
 import 'package:wristload/presentation/pages/settings_page.dart';
 
 void main() {
-  const allConnectedLabel = '为所有已连接的设备安装(可能会出现奇奇怪怪的bug)';
-  const primaryWarning = '开启后，拖入资源将会给所有已连接的设备安装。这可能会导致兼容性问题。';
+  const allConnectedLabel = '所有已连接设备';
+  const primaryWarning = '同一资源可能与部分设备不兼容。';
 
   testWidgets('所有设备安装需在五秒警告后确认才会保存', (tester) async {
     ResourceInstallTargetPolicy? changed;
@@ -24,10 +24,7 @@ void main() {
     await tester.pump();
 
     expect(find.text(primaryWarning), findsOneWidget);
-    expect(
-      find.text('经过测试，启用了该功能会触发各式各样的bug。该功能不建议开启。如需开启，等到5秒后则可开启'),
-      findsOneWidget,
-    );
+    expect(find.text('多设备安装存在兼容性风险。5 秒后可确认。'), findsOneWidget);
     final countdownWarning = tester.widget<Text>(
       find.byKey(const ValueKey('all-connected-install-warning')),
     );
@@ -48,19 +45,13 @@ void main() {
     for (var secondsLeft = 4; secondsLeft > 0; secondsLeft--) {
       await tester.pump(const Duration(seconds: 1));
       expect(find.text('确认开启（$secondsLeft）'), findsOneWidget);
-      expect(
-        find.text('经过测试，启用了该功能会触发各式各样的bug。该功能不建议开启。如需开启，等到$secondsLeft秒后则可开启'),
-        findsOneWidget,
-      );
+      expect(find.text('多设备安装存在兼容性风险。$secondsLeft 秒后可确认。'), findsOneWidget);
     }
 
     await tester.pump(const Duration(seconds: 1));
     final enabledConfirm = find.widgetWithText(FilledButton, '确认开启');
     expect(tester.widget<FilledButton>(enabledConfirm).onPressed, isNotNull);
-    expect(
-      find.text('经过测试，启用了该功能会触发各式各样的bug。该功能不建议开启。如需开启，等到0秒后则可开启'),
-      findsOneWidget,
-    );
+    expect(find.text('多设备安装存在兼容性风险。0 秒后可确认。'), findsOneWidget);
 
     await tester.tap(enabledConfirm);
     await tester.pumpAndSettle();
@@ -142,9 +133,40 @@ void main() {
     );
     final tile = tester.widget<SwitchListTile>(tileFinder);
     expect(tile.value, isFalse);
-    expect(find.text('安装之前删除同id表盘，然后安装新的表盘'), findsOneWidget);
+    expect(find.text('删除同 ID 表盘后安装'), findsOneWidget);
 
     await tester.tap(tileFinder);
+    expect(changed, isTrue);
+  });
+
+  testWidgets('macOS 悬浮安装窗入口可用并在确认后转发变更', (tester) async {
+    bool? changed;
+    await tester.pumpWidget(
+      _settingsPage(
+        onFloatingInstallWindowEnabledChanged: (value) => changed = value,
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('启用悬浮安装窗'),
+      250,
+      scrollable: find.byType(Scrollable),
+    );
+    final tileFinder = find.ancestor(
+      of: find.text('启用悬浮安装窗'),
+      matching: find.byType(SwitchListTile),
+    );
+    final tile = tester.widget<SwitchListTile>(tileFinder);
+    expect(tile.onChanged, isNotNull);
+    expect(find.text('仅支持 Windows 和 macOS'), findsNothing);
+
+    await tester.tap(tileFinder);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(changed, isNull);
+
+    await tester.tap(find.text('确认'));
+    await tester.pumpAndSettle();
     expect(changed, isTrue);
   });
 }
@@ -157,6 +179,7 @@ Widget _settingsPage({
   ResourceInstallTargetPolicy resourceInstallTargetPolicy =
       const ResourceInstallTargetPolicy(),
   List<ResourceInstallDevice> resourceInstallDevices = const [],
+  ValueChanged<bool>? onFloatingInstallWindowEnabledChanged,
 }) => MaterialApp(
   home: Scaffold(
     body: TransferSettingsPage(
@@ -175,6 +198,8 @@ Widget _settingsPage({
           onResourceInstallTargetPolicyChanged,
       showForceWatchfaceInstall: showForceWatchfaceInstall,
       onForceWatchfaceInstallChanged: onForceWatchfaceInstallChanged,
+      onFloatingInstallWindowEnabledChanged:
+          onFloatingInstallWindowEnabledChanged,
     ),
   ),
 );

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:wristload/application/device_controller.dart';
 import 'package:wristload/domain/install_models.dart';
+import 'package:wristload/domain/install_task.dart';
 import 'package:wristload/domain/watchface.dart';
 import 'package:wristload/presentation/install_request_preflight.dart';
 
