@@ -5,6 +5,22 @@ enum ConnectionIssueKind {
   authKeyMismatch,
 }
 
+class ConnectionFailureReport {
+  const ConnectionFailureReport({
+    required this.id,
+    required this.message,
+    required this.logs,
+    this.deviceId,
+    this.deviceName,
+  });
+
+  final int id;
+  final String message;
+  final List<String> logs;
+  final String? deviceId;
+  final String? deviceName;
+}
+
 class ConnectionIssue {
   const ConnectionIssue({
     required this.id,
@@ -54,16 +70,20 @@ class ConnectionIssueTracker {
 
   bool recordAuthKeyMismatch({String? targetId, String? targetName}) {
     if (_authKeyMismatchNoticeIssued ||
-        _pending.any((issue) => issue.kind == ConnectionIssueKind.authKeyMismatch)) {
+        _pending.any(
+          (issue) => issue.kind == ConnectionIssueKind.authKeyMismatch,
+        )) {
       return false;
     }
     _authKeyMismatchNoticeIssued = true;
-    _pending.add(ConnectionIssue(
-      id: _nextId++,
-      kind: ConnectionIssueKind.authKeyMismatch,
-      targetId: targetId,
-      targetName: targetName,
-    ));
+    _pending.add(
+      ConnectionIssue(
+        id: _nextId++,
+        kind: ConnectionIssueKind.authKeyMismatch,
+        targetId: targetId,
+        targetName: targetName,
+      ),
+    );
     return true;
   }
 
@@ -77,10 +97,12 @@ class ConnectionIssueTracker {
       return false;
     }
     _portConflictNoticeIssued = true;
-    _pending.add(ConnectionIssue(
-      id: _nextId++,
-      kind: ConnectionIssueKind.connectionUnavailable,
-    ));
+    _pending.add(
+      ConnectionIssue(
+        id: _nextId++,
+        kind: ConnectionIssueKind.connectionUnavailable,
+      ),
+    );
     return true;
   }
 
@@ -90,21 +112,24 @@ class ConnectionIssueTracker {
       return false;
     }
     _unexpectedNoticeSession = _authenticatedSession;
-    _pending.add(ConnectionIssue(
-      id: _nextId++,
-      kind: ConnectionIssueKind.unexpectedDisconnect,
-    ));
+    _pending.add(
+      ConnectionIssue(
+        id: _nextId++,
+        kind: ConnectionIssueKind.unexpectedDisconnect,
+      ),
+    );
     return true;
   }
 
   bool recordRfcommTimeout() {
-    if (_pending.any((issue) => issue.kind == ConnectionIssueKind.rfcommTimeout)) {
+    if (_pending.any(
+      (issue) => issue.kind == ConnectionIssueKind.rfcommTimeout,
+    )) {
       return false;
     }
-    _pending.add(ConnectionIssue(
-      id: _nextId++,
-      kind: ConnectionIssueKind.rfcommTimeout,
-    ));
+    _pending.add(
+      ConnectionIssue(id: _nextId++, kind: ConnectionIssueKind.rfcommTimeout),
+    );
     return true;
   }
 
@@ -113,6 +138,10 @@ class ConnectionIssueTracker {
     _pending.removeWhere((issue) => issue.id == id);
     return removed != _pending.length;
   }
+
+  void clearNonAuthNotices() => _pending.removeWhere(
+    (issue) => issue.kind != ConnectionIssueKind.authKeyMismatch,
+  );
 
   void reset() {
     _targetId = null;

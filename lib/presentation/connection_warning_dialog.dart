@@ -5,28 +5,105 @@ import 'package:flutter/services.dart';
 
 import '../domain/connection_issue.dart';
 
+Future<void> showConnectionFailureReport({
+  required BuildContext context,
+  required ConnectionFailureReport report,
+}) async {
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _ConnectionFailureReportDialog(report: report),
+  );
+}
+
+class _ConnectionFailureReportDialog extends StatelessWidget {
+  const _ConnectionFailureReportDialog({required this.report});
+
+  final ConnectionFailureReport report;
+
+  Future<void> _copy(BuildContext context) async {
+    final details = <String>[
+      '连接失败：${report.message}',
+      if (report.deviceName?.isNotEmpty == true) '设备名称：${report.deviceName}',
+      if (report.deviceId?.isNotEmpty == true) '设备 ID：${report.deviceId}',
+      '',
+      ...report.logs,
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: details));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('连接失败日志已复制')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final details = <String>[
+      if (report.deviceName?.isNotEmpty == true) '设备：${report.deviceName}',
+      if (report.deviceId?.isNotEmpty == true) '设备 ID：${report.deviceId}',
+      '错误：${report.message}',
+    ].join('\n');
+    return AlertDialog(
+      icon: _warningIcon(context, Icons.error_outline),
+      title: const Text('设备连接失败'),
+      content: SizedBox(
+        width: 760,
+        height: 460,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SelectableText(details),
+            const SizedBox(height: 12),
+            const Text('诊断日志'),
+            const SizedBox(height: 6),
+            Expanded(
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  report.logs.isEmpty ? '暂无日志' : report.logs.join('\n'),
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton.icon(
+          onPressed: () => _copy(context),
+          icon: const Icon(Icons.copy),
+          label: const Text('复制日志'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+}
+
 Future<void> showConnectionIssueWarning({
   required BuildContext context,
   required ConnectionIssue issue,
   required Future<void> Function() onReconnect,
   required Future<void> Function() onChangeAuthKey,
-}) =>
-    switch (issue.kind) {
-      ConnectionIssueKind.unexpectedDisconnect =>
-        showUnexpectedDisconnectWarning(
-          context: context,
-          onReconnect: onReconnect,
-        ),
-      ConnectionIssueKind.connectionUnavailable =>
-        showCannotConnectWarning(context: context),
-      ConnectionIssueKind.rfcommTimeout =>
-        showRfcommTimeoutWarning(context: context),
-      ConnectionIssueKind.authKeyMismatch =>
-        showAuthKeyMismatchWarning(
-          context: context,
-          onChangeAuthKey: onChangeAuthKey,
-        ),
-    };
+}) => switch (issue.kind) {
+  ConnectionIssueKind.unexpectedDisconnect => showUnexpectedDisconnectWarning(
+    context: context,
+    onReconnect: onReconnect,
+  ),
+  ConnectionIssueKind.connectionUnavailable => showCannotConnectWarning(
+    context: context,
+  ),
+  ConnectionIssueKind.rfcommTimeout => showRfcommTimeoutWarning(
+    context: context,
+  ),
+  ConnectionIssueKind.authKeyMismatch => showAuthKeyMismatchWarning(
+    context: context,
+    onChangeAuthKey: onChangeAuthKey,
+  ),
+};
 
 Future<void> showUnexpectedDisconnectWarning({
   required BuildContext context,
@@ -114,29 +191,26 @@ class _AuthKeyMismatchDialogState extends State<_AuthKeyMismatchDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        icon: _warningIcon(context, Icons.vpn_key),
-        title: const Text('设备 authkey 错误', textAlign: TextAlign.center),
-        content: const Text(
-          '请点击下方按钮重新输入',
-          textAlign: TextAlign.center,
-        ),
-        actions: [
-          TextButton(
-            onPressed: _changing ? null : () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: _changing ? null : _change,
-            child: _changing
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('更改'),
-          ),
-        ],
-      );
+    icon: _warningIcon(context, Icons.vpn_key),
+    title: const Text('设备 authkey 错误', textAlign: TextAlign.center),
+    content: const Text('请点击下方按钮重新输入', textAlign: TextAlign.center),
+    actions: [
+      TextButton(
+        onPressed: _changing ? null : () => Navigator.of(context).pop(),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: _changing ? null : _change,
+        child: _changing
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Text('更改'),
+      ),
+    ],
+  );
 }
 
 class _UnexpectedDisconnectDialogState
@@ -321,10 +395,7 @@ class _RfcommTimeoutDialogState extends State<_RfcommTimeoutDialog> {
         child: AlertDialog(
           icon: _warningIcon(context, Icons.bluetooth_disabled),
           title: const Text('您的设备暂时无法被连接', textAlign: TextAlign.center),
-          content: const Text(
-            '请将设备切换至连接新手机模式重试',
-            textAlign: TextAlign.center,
-          ),
+          content: const Text('请将设备切换至连接新手机模式重试', textAlign: TextAlign.center),
           actions: [
             FilledButton(
               onPressed: enabled ? _confirm : null,

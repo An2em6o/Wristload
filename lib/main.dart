@@ -24,6 +24,7 @@ import 'domain/install_task.dart';
 import 'domain/oobe_store.dart';
 import 'domain/queue_file_importer.dart';
 import 'presentation/device_info_page.dart';
+import 'presentation/app_theme.dart';
 import 'presentation/generated_page_registry.dart';
 import 'presentation/diagnostic_log_window_app.dart';
 import 'presentation/connection_warning_dialog.dart';
@@ -34,6 +35,7 @@ import 'presentation/install_split_button.dart';
 import 'presentation/install_task_card.dart';
 import 'presentation/install_warning_dialog.dart';
 import 'presentation/install_request_preflight.dart';
+import 'presentation/oobe_logo_animation.dart';
 import 'presentation/oobe_page.dart';
 import 'presentation/page_module.dart';
 import 'platform/scoped_file_picker.dart';
@@ -91,6 +93,7 @@ Future<void> main(List<String> args) async {
   ]);
   final initialThemeController = startupValues[2] as ThemeController;
   final initialThemeSeedColor = initialThemeController.seedColor;
+  final initialTianyiBlueUnlocked = initialThemeController.tianyiBlueUnlocked;
   initialThemeController.dispose();
   appLogger.debug(
     'startup configuration loaded',
@@ -106,6 +109,7 @@ Future<void> main(List<String> args) async {
       initialOobeCompleted: startupValues[0] as bool,
       initialPreference: startupValues[1] as InstallPreference,
       initialThemeSeedColor: initialThemeSeedColor,
+      initialTianyiBlueUnlocked: initialTianyiBlueUnlocked,
       initialAutoOpenDiagnosticLog: startupValues[3] as bool,
     ),
   );
@@ -144,6 +148,7 @@ class WristloadApp extends StatefulWidget {
     this.initialOobeCompleted = false,
     this.initialPreference = InstallPreference.watchface,
     this.initialThemeSeedColor = ThemeController.defaultSeedColor,
+    this.initialTianyiBlueUnlocked = false,
     this.initialAutoOpenDiagnosticLog = false,
     super.key,
   });
@@ -152,6 +157,7 @@ class WristloadApp extends StatefulWidget {
   final bool initialOobeCompleted;
   final InstallPreference initialPreference;
   final Color initialThemeSeedColor;
+  final bool initialTianyiBlueUnlocked;
   final bool initialAutoOpenDiagnosticLog;
 
   @override
@@ -178,6 +184,7 @@ class _WristloadAppState extends State<WristloadApp>
   Future<void> _preferenceWrites = Future.value();
   bool _floatingInitialized = false;
   bool _macOSPermissionRefreshInFlight = false;
+  bool _exitCleanupStarted = false;
 
   @override
   void initState() {
@@ -188,7 +195,10 @@ class _WristloadAppState extends State<WristloadApp>
     _oobeCompleted = widget.initialOobeCompleted;
     _preferredInstallTarget = widget.initialPreference;
     _autoOpenDiagnosticLog = widget.initialAutoOpenDiagnosticLog;
-    _themeController = ThemeController(widget.initialThemeSeedColor);
+    _themeController = ThemeController(
+      widget.initialThemeSeedColor,
+      tianyiBlueUnlocked: widget.initialTianyiBlueUnlocked,
+    );
     _diagnosticLogWindowCoordinator = DiagnosticLogWindowCoordinator(
       logger: appLogger,
       onClear: controller.clearLogs,
@@ -199,6 +209,7 @@ class _WristloadAppState extends State<WristloadApp>
     _floatingWindowCoordinator = FloatingWindowCoordinator(
       controller: controller,
       onOpenMainWindow: () => _appShellKey.currentState?.showHome(),
+      onExitRequested: _exitApplication,
       themeSeedProvider: () => _themeController.seedColor,
     );
     if (widget.desktopIntegrationEnabled && _oobeCompleted) {
@@ -261,6 +272,14 @@ class _WristloadAppState extends State<WristloadApp>
     onCompleted: _completeOobe,
   );
 
+  Future<void> _unlockTianyiBlue() async {
+    await _themeController.unlockTianyiBlue();
+    await Future.wait([
+      _floatingWindowCoordinator.updateTheme(),
+      _diagnosticLogWindowCoordinator.updateTheme(),
+    ]);
+  }
+
   Widget _buildAppShell() => ListenableBuilder(
     listenable: controller,
     builder: (context, _) => AppShell(
@@ -271,11 +290,13 @@ class _WristloadAppState extends State<WristloadApp>
       onReplayOobe: _replayOobe,
       floatingInstallWindowEnabled: _floatingInstallWindowEnabled,
       themeSeedColor: _themeController.seedColor,
+      tianyiBlueUnlocked: _themeController.tianyiBlueUnlocked,
       onThemeSeedChanged: (color) {
         unawaited(_themeController.setSeed(color));
         unawaited(_floatingWindowCoordinator.updateTheme());
         unawaited(_diagnosticLogWindowCoordinator.updateTheme());
       },
+      onUnlockTianyiBlue: _unlockTianyiBlue,
       onFloatingInstallWindowEnabledChanged: widget.desktopIntegrationEnabled
           ? (enabled) {
               unawaited(_setFloatingInstallWindowEnabled(enabled));
@@ -409,6 +430,54 @@ class _WristloadAppState extends State<WristloadApp>
     }
   }
 
+  Future<void> _exitApplication() async {
+    if (_exitCleanupStarted) return;
+    _exitCleanupStarted = true;
+    controller.queueInstallPreparer = null;
+    appLogger.info(
+      'Windows application shutdown started',
+      category: DiagnosticLogCategory.runtime,
+    );
+
+    // A visible window that waits for plugin cleanup is reported by Windows as
+    // "not responding". Hide it first, then keep all native cleanup bounded.
+    try {
+      await windowManager.hide().timeout(const Duration(milliseconds: 300));
+    } on Object {
+      // Destruction below remains the authoritative exit operation.
+    }
+
+    try {
+      await Future.wait<void>([
+        _diagnosticLogWindowCoordinator.shutdown().timeout(
+          const Duration(milliseconds: 700),
+        ),
+        controller.disconnect().timeout(const Duration(seconds: 1)),
+      ]).timeout(const Duration(milliseconds: 1100));
+    } on Object catch (error) {
+      appLogger.warning(
+        'Background cleanup did not complete before exit',
+        category: DiagnosticLogCategory.runtime,
+        fields: <String, Object?>{'errorType': error.runtimeType.toString()},
+      );
+    }
+
+    try {
+      await windowManager
+          .setPreventClose(false)
+          .timeout(const Duration(milliseconds: 200));
+    } on Object {
+      // Continue to the final process-exit fallback.
+    }
+    try {
+      await windowManager.destroy().timeout(const Duration(milliseconds: 500));
+    } on Object {
+      // A blocked desktop plugin must not leave the process behind.
+    } finally {
+      if (Platform.isWindows) exit(0);
+    }
+  }
+
   @override
   void dispose() {
     if (Platform.isMacOS) {
@@ -428,20 +497,12 @@ class _WristloadAppState extends State<WristloadApp>
     builder: (context, _) => MaterialApp(
       navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: _themeController.seedColor,
-          brightness: Brightness.light,
-        ),
+      theme: buildWristloadTheme(
+        seedColor: _themeController.seedColor,
         brightness: Brightness.light,
       ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: _themeController.seedColor,
-          brightness: Brightness.dark,
-        ),
+      darkTheme: buildWristloadTheme(
+        seedColor: _themeController.seedColor,
         brightness: Brightness.dark,
       ),
       themeMode: ThemeMode.system,
@@ -483,11 +544,13 @@ class _WristloadAppState extends State<WristloadApp>
           ? _setDiagnosticLogWindowOpen
           : null,
       themeSeedColor: _themeController.seedColor,
+      tianyiBlueUnlocked: _themeController.tianyiBlueUnlocked,
       onThemeSeedChanged: (color) {
         unawaited(_themeController.setSeed(color));
         unawaited(_floatingWindowCoordinator.updateTheme());
         unawaited(_diagnosticLogWindowCoordinator.updateTheme());
       },
+      onUnlockTianyiBlue: _unlockTianyiBlue,
       onReplayOobe: _replayOobe,
       onEditAuthKey: () => _appShellKey.currentState?._editAuthKey(),
     ),
@@ -504,6 +567,8 @@ class AppShell extends StatefulWidget {
     required this.onFloatingInstallWindowEnabledChanged,
     required this.themeSeedColor,
     required this.onThemeSeedChanged,
+    required this.tianyiBlueUnlocked,
+    required this.onUnlockTianyiBlue,
     this.diagnosticLogWindowOpen = false,
     this.autoOpenDiagnosticLog = false,
     this.onDiagnosticLogWindowChanged,
@@ -518,6 +583,8 @@ class AppShell extends StatefulWidget {
   final bool floatingInstallWindowEnabled;
   final Color themeSeedColor;
   final ValueChanged<Color> onThemeSeedChanged;
+  final bool tianyiBlueUnlocked;
+  final AsyncCallback onUnlockTianyiBlue;
   final ValueChanged<bool>? onFloatingInstallWindowEnabledChanged;
   final bool diagnosticLogWindowOpen;
   final bool autoOpenDiagnosticLog;
@@ -532,6 +599,8 @@ class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
   int? _scheduledConnectionIssueId;
   int? _visibleConnectionIssueId;
+  int? _scheduledConnectionFailureReportId;
+  int? _visibleConnectionFailureReportId;
   bool _initialScanScheduled = false;
   bool _pairingScanScheduled = false;
   late bool _wasConnectionActive;
@@ -556,6 +625,8 @@ class _AppShellState extends State<AppShell> {
     onDiagnosticLogWindowChanged: widget.onDiagnosticLogWindowChanged,
     themeSeedColor: widget.themeSeedColor,
     onThemeSeedChanged: widget.onThemeSeedChanged,
+    tianyiBlueUnlocked: widget.tianyiBlueUnlocked,
+    onUnlockTianyiBlue: widget.onUnlockTianyiBlue,
     onReplayOobe: widget.onReplayOobe,
     onEditAuthKey: _editAuthKey,
   );
@@ -614,10 +685,13 @@ class _AppShellState extends State<AppShell> {
     widget.controller.addListener(_handleControllerChanged);
     _scheduledConnectionIssueId = null;
     _visibleConnectionIssueId = null;
+    _scheduledConnectionFailureReportId = null;
+    _visibleConnectionFailureReportId = null;
     _handleControllerChanged();
   }
 
   void _handleControllerChanged() {
+    _handleConnectionFailureReport();
     _handleConnectionIssue();
     final active = _connectionActive;
     // V2 devices can briefly replace their first RFCOMM socket immediately
@@ -635,6 +709,45 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     _wasConnectionActive = active;
+  }
+
+  void _handleConnectionFailureReport() {
+    final report = widget.controller.pendingConnectionFailureReport;
+    if (!mounted ||
+        report == null ||
+        report.id == _scheduledConnectionFailureReportId ||
+        report.id == _visibleConnectionFailureReportId) {
+      return;
+    }
+    _scheduledConnectionFailureReportId = report.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_showConnectionFailureReport(report.id));
+    });
+  }
+
+  Future<void> _showConnectionFailureReport(int reportId) async {
+    if (_visibleConnectionFailureReportId != null ||
+        _visibleConnectionIssueId != null) {
+      return;
+    }
+    final report = widget.controller.pendingConnectionFailureReport;
+    if (report == null || report.id != reportId) {
+      if (_scheduledConnectionFailureReportId == reportId) {
+        _scheduledConnectionFailureReportId = null;
+      }
+      _handleConnectionFailureReport();
+      return;
+    }
+    _scheduledConnectionFailureReportId = null;
+    _visibleConnectionFailureReportId = reportId;
+    try {
+      await showConnectionFailureReport(context: context, report: report);
+    } finally {
+      widget.controller.dismissConnectionFailureReport(reportId);
+      _visibleConnectionFailureReportId = null;
+      _handleConnectionFailureReport();
+    }
   }
 
   void _schedulePairingScan() {
@@ -655,6 +768,9 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _handleConnectionIssue() {
+    // The detailed connection report is the primary failure UI. Defer the
+    // generic authkey/timeout warning until the report has been dismissed.
+    if (widget.controller.pendingConnectionFailureReport != null) return;
     final issue = widget.controller.pendingConnectionIssue;
     if (!mounted ||
         issue == null ||
@@ -1070,6 +1186,12 @@ class _GlobalConnectionStatus extends StatelessWidget {
       key: const ValueKey('global-connection-status'),
       mainAxisSize: MainAxisSize.min,
       children: [
+        WristloadLogoMark(
+          key: const ValueKey('global-brand-logo'),
+          dimension: 26,
+          color: colors.primary,
+        ),
+        const SizedBox(width: 8),
         const Text('Wristload'),
         const SizedBox(width: 16),
         Container(

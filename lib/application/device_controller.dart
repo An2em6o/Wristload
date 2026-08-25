@@ -24,6 +24,7 @@ import '../domain/transfer_settings_store.dart';
 import '../domain/rpk_install_limit.dart';
 import '../domain/resource_install_target_policy.dart';
 import '../domain/protocol/auth_handshake.dart';
+import '../domain/protocol/device_log_transfer.dart';
 import '../domain/protocol/session_cipher.dart';
 import '../domain/protocol/spp_protocol.dart';
 import '../domain/protocol/mass_transfer.dart';
@@ -263,6 +264,26 @@ class DeviceController extends ChangeNotifier {
   /// [logs] and are never used as presentation state.
   ConnectionIssue? get pendingConnectionIssue => _connectionIssues.pending;
 
+  ConnectionFailureReport? get pendingConnectionFailureReport {
+    final own = _pendingConnectionFailureReport;
+    if (own != null) return own;
+    for (final session in _additionalSessions.values) {
+      final report = session.pendingConnectionFailureReport;
+      if (report != null) return report;
+    }
+    return null;
+  }
+
+  void dismissConnectionFailureReport(int id) {
+    if (_pendingConnectionFailureReport?.id == id) {
+      _pendingConnectionFailureReport = null;
+    }
+    for (final session in _additionalSessions.values) {
+      session.dismissConnectionFailureReport(id);
+    }
+    notifyListeners();
+  }
+
   int get consecutiveConnectionFailures =>
       _connectionIssues.consecutivePortConflicts;
 
@@ -500,6 +521,10 @@ class DeviceController extends ChangeNotifier {
   }
 
   String? error;
+  ConnectionFailureReport? _pendingConnectionFailureReport;
+  DateTime? _connectionAttemptStartedAt;
+  bool _connectionFailurePublishedForAttempt = false;
+  static int _nextConnectionFailureReportId = 1;
   bool sessionReady = false;
   bool sppConnecting = false;
   ConnectionMode connectionMode = ConnectionMode.modern;
@@ -683,9 +708,9 @@ class DeviceController extends ChangeNotifier {
     return List<ResourceInstallDevice>.unmodifiable(devices);
   }
 
-  /// Extra macOS device sessions, including a pending or failed attempt so the
-  /// home page can expose its own retry/disconnect controls without affecting
-  /// the primary watch.
+  /// Extra desktop device sessions, including a pending or failed attempt so
+  /// the home page can expose its own retry/disconnect controls without
+  /// affecting the primary watch.
   List<DeviceSessionView> get additionalDeviceSessions =>
       List<DeviceSessionView>.unmodifiable(
         _additionalSessions.entries.map(
@@ -755,6 +780,19 @@ class DeviceController extends ChangeNotifier {
 
   bool get supportsAdditionalMacOSDevices =>
       !_isManagedSession && defaultTargetPlatform == TargetPlatform.macOS;
+
+  bool get supportsAdditionalWindowsDevices =>
+      !_isManagedSession && defaultTargetPlatform == TargetPlatform.windows;
+
+  bool get supportsAdditionalDesktopDevices =>
+      supportsAdditionalMacOSDevices || supportsAdditionalWindowsDevices;
+
+  /// Windows currently supports one primary and one secondary RFCOMM session.
+  /// macOS retains its existing multi-session behavior.
+  bool get canConnectAdditionalDesktopDevice =>
+      supportsAdditionalDesktopDevices &&
+      isConnected &&
+      (!supportsAdditionalWindowsDevices || _additionalSessions.isEmpty);
 
   bool isSessionManagedByThisController(String deviceId) =>
       _additionalSessions.containsKey(_sessionKey(deviceId));
@@ -853,18 +891,34 @@ class DeviceController extends ChangeNotifier {
     );
   }
 
-  /// Reuses a confirmed macOS classic identity for a saved additional device.
+  /// Reuses a saved identity and authkey for an additional desktop device.
+  /// Windows deliberately exposes only this saved-device path: scanning and
+  /// pairing a new secondary device remains outside the two-device feature.
   Future<bool> connectAdditionalSavedDevice(
     AuthKeyBinding binding, {
     String? authKeyOverride,
   }) async {
-    if (!supportsAdditionalMacOSDevices) return false;
-    await _bluetoothInitialization;
-    if (_disposed || !_macOSBluetoothAuthorization.isAuthorized) {
-      error = 'macOS 蓝牙权限尚未授权，无法连接附加设备。';
+    if (!supportsAdditionalDesktopDevices) return false;
+    if (!isConnected) {
+      error = '请先连接主设备，再使用多设备连接。';
       _log(error!);
       notifyListeners();
       return false;
+    }
+    if (supportsAdditionalWindowsDevices && _additionalSessions.isNotEmpty) {
+      error = 'Windows 当前最多同时连接两台设备。';
+      _log(error!);
+      notifyListeners();
+      return false;
+    }
+    if (supportsAdditionalMacOSDevices) {
+      await _bluetoothInitialization;
+      if (_disposed || !_macOSBluetoothAuthorization.isAuthorized) {
+        error = 'macOS 蓝牙权限尚未授权，无法连接附加设备。';
+        _log(error!);
+        notifyListeners();
+        return false;
+      }
     }
     final id = binding.id.trim();
     if (id.isEmpty || isDeviceAlreadyInSession(id)) {
@@ -883,7 +937,7 @@ class DeviceController extends ChangeNotifier {
     if (uuid == null ||
         profile == null ||
         profile.generation != ProtocolGeneration.v2Vela) {
-      error = '该已保存设备不能用于 macOS 多设备 RFCOMM 直连。';
+      error = '该已保存设备不能用于桌面端多设备 RFCOMM 直连。';
       _log(error!);
       notifyListeners();
       return false;
@@ -895,9 +949,14 @@ class DeviceController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    final key = supplied ?? await readAuthKeyFor(id);
+    final storedKey = await readAuthKeyFor(id);
+    final key = supportsAdditionalWindowsDevices
+        ? storedKey
+        : supplied ?? storedKey;
     if (key == null) {
-      error = '已保存设备缺少可用 authkey，请手动输入后再连接。';
+      error = supportsAdditionalWindowsDevices
+          ? 'Windows 多设备连接仅支持已有 authkey 的已保存设备。'
+          : '已保存设备缺少可用 authkey，请手动输入后再连接。';
       _log(error!);
       notifyListeners();
       return false;
@@ -921,7 +980,12 @@ class DeviceController extends ChangeNotifier {
   }) async {
     final id = peripheral.uuid.toString();
     final key = _sessionKey(id);
-    if (_disposed || _additionalSessions.containsKey(key)) return false;
+    if (_disposed ||
+        !isConnected ||
+        _additionalSessions.containsKey(key) ||
+        (supportsAdditionalWindowsDevices && _additionalSessions.isNotEmpty)) {
+      return false;
+    }
     final session = DeviceController._managedSession(
       transport: _transport,
       checkpointStore: InstallCheckpointStore(scope: id),
@@ -965,7 +1029,8 @@ class DeviceController extends ChangeNotifier {
       profile: profile,
       advertisedName: advertisedName,
     );
-    session._log('已作为附加设备加入 macOS 独立 RFCOMM 会话。');
+    final platformName = supportsAdditionalWindowsDevices ? 'Windows' : 'macOS';
+    session._log('已作为附加设备加入 $platformName 独立 RFCOMM 会话。');
     session.notifyListeners();
     try {
       await session._connectDesktopV2(
@@ -1093,6 +1158,7 @@ class DeviceController extends ChangeNotifier {
     required DeviceProfile profile,
     required String advertisedName,
   }) {
+    session._beginConnectionFailureAttempt();
     final id = peripheral.uuid.toString();
     session
       .._connectionIssues.selectTarget(id)
@@ -1323,6 +1389,9 @@ class DeviceController extends ChangeNotifier {
   }
 
   void _finishFailedConnection(String message) {
+    final failedDevice = connectedDevice ?? _lastPeripheral;
+    final failedName = (connectedDeviceName ?? connectedProfile?.displayName)
+        ?.trim();
     error = message;
     _resumeScanningAfterConnectionEnd = false;
     _clearSppHandshakeState();
@@ -1330,7 +1399,35 @@ class DeviceController extends ChangeNotifier {
     _connectionTearingDown = false;
     _postAuthRecoveryEpoch = null;
     _log(message);
+    // The detailed failure report replaces generic timeout/availability
+    // notices. Preserve authkey mismatch so the existing credential editor
+    // can still open after the user closes the diagnostic report.
+    _connectionIssues.clearNonAuthNotices();
+    if (!_connectionFailurePublishedForAttempt) {
+      final startedAt = _connectionAttemptStartedAt;
+      final journal = _logger.entries
+          .where(
+            (entry) =>
+                startedAt == null || !entry.timestamp.isBefore(startedAt),
+          )
+          .map((entry) => entry.displayText)
+          .toList(growable: false);
+      _pendingConnectionFailureReport = ConnectionFailureReport(
+        id: _nextConnectionFailureReportId++,
+        message: message,
+        deviceId: failedDevice?.uuid.toString(),
+        deviceName: failedName,
+        logs: journal.isEmpty ? List<String>.unmodifiable(logs) : journal,
+      );
+      _connectionFailurePublishedForAttempt = true;
+    }
     notifyListeners();
+  }
+
+  void _beginConnectionFailureAttempt() {
+    _connectionAttemptStartedAt = DateTime.now();
+    _connectionFailurePublishedForAttempt = false;
+    _pendingConnectionFailureReport = null;
   }
 
   Future<void> _initializeBluetoothState() async {
@@ -2674,6 +2771,7 @@ class DeviceController extends ChangeNotifier {
       return;
     }
     _connectionIssues.selectTarget(result.peripheral.uuid.toString());
+    _beginConnectionFailureAttempt();
     _authKeyRejectedEpoch = null;
     // A new explicit attempt supersedes a previously scheduled recovery scan.
     _resumeScanningAfterConnectionEnd = false;
@@ -2705,6 +2803,7 @@ class DeviceController extends ChangeNotifier {
     DeviceProfile profile, {
     bool directIdentity = false,
   }) async {
+    _beginConnectionFailureAttempt();
     _advanceSessionEpoch();
     _hasActiveGattTransport = false;
     final connectionSession = _sessionEpoch;
@@ -3023,11 +3122,29 @@ class DeviceController extends ChangeNotifier {
       await inFlight;
       return;
     }
-    final operation = _connectSppInternal(resumeSession: resumeSession);
+    // Reserve the single-flight slot before _connectSppInternal can publish a
+    // connecting state. notifyListeners() is synchronous, so a listener may
+    // re-enter connectSpp before an async call returns its Future to this frame.
+    // Starting the internal operation first therefore allowed two native
+    // RFCOMM requests for the same device; the later timeout then disconnected
+    // the socket already opened by the first request.
+    final completion = Completer<void>();
+    final operation = completion.future;
     _sppConnectInFlight = operation;
+    // The initiating caller receives unexpected errors directly below. Keep a
+    // listener attached to the shared Future so an error is also safe when no
+    // duplicate caller happened to await it.
+    unawaited(operation.catchError((Object _, StackTrace __) {}));
     try {
-      await operation;
+      await _connectSppInternal(resumeSession: resumeSession);
+      if (!completion.isCompleted) completion.complete();
+    } catch (error, stackTrace) {
+      if (!completion.isCompleted) {
+        completion.completeError(error, stackTrace);
+      }
+      rethrow;
     } finally {
+      if (!completion.isCompleted) completion.complete();
       if (identical(_sppConnectInFlight, operation)) {
         _sppConnectInFlight = null;
       }
@@ -3051,8 +3168,12 @@ class DeviceController extends ChangeNotifier {
       return;
     }
     final connectionEpoch = ++_sppConnectionEpoch;
+    // beta0.1.3 did not put a Dart deadline around the Windows pairing broker.
+    // The system confirmation can remain pending while Windows publishes the
+    // classic identity and SPP service, so timing out here abandons a request
+    // that may still complete successfully in the native layer.
     final rfcommTimeout = defaultTargetPlatform == TargetPlatform.windows
-        ? const Duration(seconds: 20)
+        ? null
         : const Duration(seconds: 8);
     _closingFailedSppEpoch = null;
     sessionReady = false;
@@ -3106,16 +3227,24 @@ class DeviceController extends ChangeNotifier {
         _ => '当前平台',
       };
       _log('  $platformName 的 BLE 连接不等于经典蓝牙 SPP 配对；若手环弹出请求，请在手环上确认。');
-      _log('RFCOMM 建链等待上限：${rfcommTimeout.inSeconds} 秒。');
-      final classicAddress = await _transport
-          .connectRfcomm(device.uuid, advertisedName: connectedDeviceName)
-          .timeout(
+      final connectOperation = _transport.connectRfcomm(
+        device.uuid,
+        advertisedName: connectedDeviceName,
+      );
+      final String? classicAddress;
+      if (rfcommTimeout == null) {
+        _log('Windows RFCOMM 建链正在等待系统配对完成，不设置固定倒计时。');
+        classicAddress = await connectOperation;
+      } else {
+        _log('RFCOMM 建链等待上限：${rfcommTimeout.inSeconds} 秒。');
+        classicAddress = await connectOperation.timeout(
+          rfcommTimeout,
+          onTimeout: () => throw TimeoutException(
+            'RFCOMM ${rfcommTimeout.inSeconds} 秒内设备未响应',
             rfcommTimeout,
-            onTimeout: () => throw TimeoutException(
-              'RFCOMM ${rfcommTimeout.inSeconds} 秒内设备未响应',
-              rfcommTimeout,
-            ),
-          );
+          ),
+        );
+      }
       if (!_isCurrentSppConnection(connectionEpoch)) return;
       connectedClassicAddress = classicAddress ?? connectedClassicAddress;
       _connectionIssues.connectionSucceeded();
@@ -3131,7 +3260,8 @@ class DeviceController extends ChangeNotifier {
       if (_isCurrentSppConnection(connectionEpoch)) {
         await _cleanupFailedSppConnect(device, exception, connectionEpoch);
       }
-      if (exception is TimeoutException &&
+      if (rfcommTimeout != null &&
+          exception is TimeoutException &&
           exception.duration == rfcommTimeout) {
         _connectionIssues.recordRfcommTimeout();
         _log(
@@ -3190,9 +3320,16 @@ class DeviceController extends ChangeNotifier {
   int deviceLogSegmentTotal = 0;
   int deviceLogReceivedSegments = 0;
   int deviceLogReceivedBytes = 0;
-  final BytesBuilder _deviceLogBuffer = BytesBuilder(copy: false);
+  int deviceLogFileCount = 0;
+  final DeviceLogAssembler _deviceLogAssembler = DeviceLogAssembler();
+  Future<void> _deviceLogSaveQueue = Future<void>.value();
+  Directory? _deviceLogExportDirectory;
   Timer? _deviceLogTimeout;
   bool _deviceLogFinishing = false;
+  bool _deviceLogControlSucceeded = false;
+  int _deviceLogCompletedPayloadCount = 0;
+  int _deviceLogActivitySerial = 0;
+  int _deviceLogPullEpoch = 0;
   bool bootModeSwitching = false;
   String? bootModeError;
   String? pendingBootModeLabel;
@@ -3682,15 +3819,12 @@ class DeviceController extends ChangeNotifier {
     final channel = packet.payload[0] & 0x0f;
     final opCode = packet.payload[1];
     final data = packet.payload.sublist(2);
+    final rawDataType = SppProtocol.rawDataTypeForChannel(channel, v2: true);
     if ((deviceLogPullStarting || deviceLogPullActive) &&
-        _isDeviceLogTransportData(data)) {
-      _handleDeviceLogSegment(channel, opCode, data);
-      return;
-    }
-    if (channel == SppProtocol.channelMass &&
+        rawDataType != null &&
         opCode == SppProtocol.opCodeWrite &&
-        (deviceLogPullStarting || deviceLogPullActive)) {
-      _handleDeviceLogMassSegment(data);
+        DeviceLogSegment.looksLike(data)) {
+      _handleDeviceLogSegment(data);
       return;
     }
     _log('  DATA channel=$channel opCode=$opCode data=${_hex(data)}');
@@ -3884,91 +4018,201 @@ class DeviceController extends ChangeNotifier {
         message.sub != ZauCommand.deviceLogResultSub)
       return;
     final result = DeviceLogPayload.parseResult(message.payload);
-    if (result == null) return;
-    if (result.code != 0) _failDeviceLogPull('设备日志导出失败，结果码=${result.code}');
-  }
-
-  bool _isDeviceLogTransportData(List<int> data) =>
-      data.length >= 6 && data[0] == 0 && (data[1] == 129 || data[1] == 130);
-
-  void _handleDeviceLogMassSegment(List<int> data) {
-    if (data.length < 4) return _failDeviceLogPull('设备日志分片长度不足');
-    final total = data[0] | data[1] << 8, seq = data[2] | data[3] << 8;
-    _appendDeviceLogChunk(total, seq, data.sublist(4));
-  }
-
-  void _handleDeviceLogSegment(int channel, int opCode, List<int> data) {
-    final total = data[2] | data[3] << 8, seq = data[4] | data[5] << 8;
-    _appendDeviceLogChunk(total, seq, data.sublist(6));
-  }
-
-  void _appendDeviceLogChunk(int total, int seq, List<int> chunk) {
-    if (total <= 0 || seq != deviceLogReceivedSegments + 1 || seq > total) {
-      _failDeviceLogPull('设备日志分片顺序无效：$seq/$total');
+    if (result == null || (!deviceLogPullStarting && !deviceLogPullActive)) {
       return;
     }
-    if (deviceLogSegmentTotal == 0) deviceLogSegmentTotal = total;
-    if (deviceLogSegmentTotal != total ||
-        deviceLogReceivedBytes + chunk.length > 64 * 1024 * 1024) {
-      _failDeviceLogPull('设备日志分片无效');
+    _log('收到设备日志任务结果：type=${result.type} code=${result.code}');
+    if (result.code == 0) {
+      _deviceLogControlSucceeded = true;
+      deviceLogPullStarting = false;
+      deviceLogPullActive = true;
+      if (_deviceLogCompletedPayloadCount > 0 &&
+          _deviceLogAssembler.received == 0) {
+        _armDeviceLogCompletionGrace();
+      } else {
+        _log('设备日志任务已成功，继续等待独立的 103/104 原始文件分片。');
+        _armDeviceLogTimeout();
+      }
+      notifyListeners();
       return;
     }
-    _deviceLogBuffer.add(chunk);
-    deviceLogReceivedSegments = seq;
-    deviceLogReceivedBytes += chunk.length;
+    final reason = switch (result.code) {
+      1 => '设备没有可导出的日志',
+      2 => '设备正在处理其他日志任务，请稍后重试',
+      10 => '设备报告日志拉取失败',
+      _ => '设备日志导出失败，结果码=${result.code}',
+    };
+    _failDeviceLogPull(reason);
+  }
+
+  void _handleDeviceLogSegment(List<int> data) {
+    _deviceLogActivitySerial++;
+    _deviceLogFinishing = false;
+    var completedFile = false;
+    try {
+      final segment = DeviceLogSegment.parse(data);
+      final completed = _deviceLogAssembler.add(segment);
+      deviceLogSegmentTotal = segment.total;
+      deviceLogReceivedSegments = segment.sequence;
+      deviceLogReceivedBytes += segment.data.length;
+      _log(
+        '收到设备日志分片 ${segment.sequence}/${segment.total}：'
+        '${segment.data.length} B，command=${segment.command}',
+      );
+      if (completed != null) {
+        final payload = DeviceLogFilePayload.parse(completed);
+        _deviceLogCompletedPayloadCount++;
+        completedFile = true;
+        _queueDeviceLogFile(payload, _deviceLogPullEpoch);
+      }
+    } on Object catch (error) {
+      _failDeviceLogPull('设备日志分片解析失败：$error');
+      return;
+    }
     deviceLogPullStarting = false;
     deviceLogPullActive = true;
-    _armDeviceLogTimeout();
-    notifyListeners();
-    if (seq == total) {
-      _deviceLogFinishing = true;
-      unawaited(_finishDeviceLogPull());
+    if (completedFile && _deviceLogControlSucceeded) {
+      _armDeviceLogCompletionGrace();
+    } else {
+      _armDeviceLogTimeout();
     }
+    notifyListeners();
+  }
+
+  void _queueDeviceLogFile(DeviceLogFilePayload payload, int pullEpoch) {
+    _deviceLogSaveQueue = _deviceLogSaveQueue.then((_) async {
+      if (pullEpoch != _deviceLogPullEpoch) return;
+      await _saveDeviceLogFile(payload, pullEpoch);
+    });
+    // Keep the queued error observable by _completeDeviceLogPull without
+    // letting an early disk failure become an unhandled asynchronous error.
+    unawaited(_deviceLogSaveQueue.catchError((Object _, StackTrace __) {}));
+  }
+
+  Future<void> _saveDeviceLogFile(
+    DeviceLogFilePayload payload,
+    int pullEpoch,
+  ) async {
+    var exportDirectory = _deviceLogExportDirectory;
+    if (exportDirectory == null) {
+      final documents = await getApplicationDocumentsDirectory();
+      exportDirectory = Directory(
+        '${documents.path}${Platform.pathSeparator}DeviceLog'
+        '${Platform.pathSeparator}device_log_'
+        '${DateTime.now().millisecondsSinceEpoch}',
+      );
+      await exportDirectory.create(recursive: true);
+      if (pullEpoch != _deviceLogPullEpoch) return;
+      _deviceLogExportDirectory = exportDirectory;
+      latestDeviceLogPath = exportDirectory.path;
+    }
+
+    final components = safeDeviceLogPathComponents(payload.devicePath);
+    var file = File(
+      <String>[
+        exportDirectory.path,
+        ...components,
+      ].join(Platform.pathSeparator),
+    );
+    await file.parent.create(recursive: true);
+    if (await file.exists()) {
+      final name = components.last;
+      var suffix = 2;
+      do {
+        file = File(
+          <String>[
+            exportDirectory.path,
+            ...components.take(components.length - 1),
+            '$name.$suffix',
+          ].join(Platform.pathSeparator),
+        );
+        suffix++;
+      } while (await file.exists());
+    }
+    await file.writeAsBytes(payload.bytes, flush: true);
+    if (pullEpoch != _deviceLogPullEpoch) return;
+    deviceLogFileCount++;
+    latestDeviceLogId = payload.devicePath;
+    _log(
+      '设备日志文件已保存：${payload.devicePath} '
+      '(${payload.bytes.length} B) -> ${file.path}',
+    );
+    notifyListeners();
   }
 
   void _armDeviceLogTimeout() {
     _deviceLogTimeout?.cancel();
-    _deviceLogTimeout = Timer(
-      const Duration(seconds: 60),
-      () => _failDeviceLogPull('等待设备日志分片超时'),
-    );
+    final pullEpoch = _deviceLogPullEpoch;
+    _deviceLogTimeout = Timer(const Duration(seconds: 60), () {
+      if (pullEpoch != _deviceLogPullEpoch) return;
+      final reason =
+          _deviceLogControlSucceeded && _deviceLogCompletedPayloadCount == 0
+          ? '设备日志任务已返回成功，但 60 秒内没有收到 103/104 原始文件分片'
+          : '等待设备日志分片超时';
+      _failDeviceLogPull(reason);
+    });
   }
 
-  Future<void> _finishDeviceLogPull() async {
+  void _armDeviceLogCompletionGrace() {
+    _deviceLogTimeout?.cancel();
+    final pullEpoch = _deviceLogPullEpoch;
+    final activitySerial = _deviceLogActivitySerial;
+    _log('完整日志文件已收到；等待 3 秒确认没有后续文件分片。');
+    _deviceLogTimeout = Timer(const Duration(seconds: 3), () {
+      if (pullEpoch != _deviceLogPullEpoch ||
+          activitySerial != _deviceLogActivitySerial ||
+          !_deviceLogControlSucceeded ||
+          _deviceLogAssembler.received != 0 ||
+          _deviceLogFinishing) {
+        return;
+      }
+      _deviceLogFinishing = true;
+      unawaited(_completeDeviceLogPull(pullEpoch, activitySerial));
+    });
+  }
+
+  Future<void> _completeDeviceLogPull(int pullEpoch, int activitySerial) async {
     _deviceLogTimeout?.cancel();
     _deviceLogTimeout = null;
     try {
-      final bytes = _deviceLogBuffer.toBytes();
-      if (bytes.isEmpty) throw const FormatException('设备日志为空');
-      final dir = Directory(
-        '${(await getApplicationDocumentsDirectory()).path}${Platform.pathSeparator}DeviceLog',
-      );
-      await dir.create(recursive: true);
-      final file = File(
-        '${dir.path}${Platform.pathSeparator}device_log_${DateTime.now().millisecondsSinceEpoch}.bin',
-      );
-      await file.writeAsBytes(bytes, flush: true);
-      latestDeviceLogPath = file.path;
+      await _deviceLogSaveQueue;
+      if (pullEpoch != _deviceLogPullEpoch ||
+          activitySerial != _deviceLogActivitySerial) {
+        _deviceLogFinishing = false;
+        return;
+      }
+      if (_deviceLogAssembler.received != 0) {
+        throw const FormatException('设备提前结束日志任务，仍有未完成分片');
+      }
+      if (deviceLogFileCount == 0 || latestDeviceLogPath == null) {
+        throw const FormatException('设备返回成功，但没有收到日志文件');
+      }
       deviceLogError = null;
-    } catch (e) {
-      deviceLogError = '设备日志导出失败：$e';
+    } on Object catch (error) {
+      if (pullEpoch != _deviceLogPullEpoch) return;
+      deviceLogError = '设备日志导出失败：$error';
     }
+    if (pullEpoch != _deviceLogPullEpoch) return;
     deviceLogPullStarting = false;
     deviceLogPullActive = false;
     _deviceLogFinishing = false;
     _log(
-      latestDeviceLogPath == null
-          ? deviceLogError!
-          : '设备日志已导出：$latestDeviceLogPath',
+      deviceLogError ??
+          '设备日志拉取完成：共 $deviceLogFileCount 个文件，目录：'
+              '$latestDeviceLogPath',
     );
     notifyListeners();
   }
 
   void _failDeviceLogPull(String reason) {
-    if (_deviceLogFinishing) return;
     _deviceLogTimeout?.cancel();
+    _deviceLogTimeout = null;
+    _deviceLogAssembler.reset();
+    _deviceLogPullEpoch++;
     deviceLogPullStarting = false;
     deviceLogPullActive = false;
+    _deviceLogFinishing = false;
+    _deviceLogControlSucceeded = false;
     deviceLogError = reason;
     _log(reason);
     notifyListeners();
@@ -4244,6 +4488,7 @@ class DeviceController extends ChangeNotifier {
       return;
     }
     _advanceSessionEpoch();
+    _beginConnectionFailureAttempt();
     _resumeScanningAfterConnectionEnd = false;
     final reconnectSession = _sessionEpoch;
     _sppConnectionEpoch++;
@@ -6394,11 +6639,12 @@ class DeviceController extends ChangeNotifier {
     try {
       await _sendBusinessNoResponse(
         Zau(
-          command: ZauCommand.debugTransfer,
-          sub: ZauCommand.debugTransferDeviceLogSub,
-          payload: DeviceLogPayload.dumpRequest(),
+          command: ZauCommand.deviceLog,
+          sub: ZauCommand.deviceLogStartSub,
+          payload: DeviceLogPayload.startRequest(),
         ),
       );
+      _log('设备日志上传请求已发送，等待 type=104 分片。');
       _armDeviceLogTimeout();
       return true;
     } catch (e) {
@@ -6408,13 +6654,22 @@ class DeviceController extends ChangeNotifier {
   }
 
   void _resetDeviceLogPull() {
+    _deviceLogPullEpoch++;
     _deviceLogTimeout?.cancel();
     _deviceLogTimeout = null;
-    _deviceLogBuffer.clear();
+    _deviceLogAssembler.reset();
+    _deviceLogSaveQueue = Future<void>.value();
+    _deviceLogExportDirectory = null;
     deviceLogSegmentTotal = 0;
     deviceLogReceivedSegments = 0;
     deviceLogReceivedBytes = 0;
+    deviceLogFileCount = 0;
+    latestDeviceLogPath = null;
+    latestDeviceLogId = null;
     _deviceLogFinishing = false;
+    _deviceLogControlSucceeded = false;
+    _deviceLogCompletedPayloadCount = 0;
+    _deviceLogActivitySerial = 0;
   }
 
   Future<bool> syncSystemTime({bool automatic = false}) async {
@@ -6913,6 +7168,10 @@ class DeviceController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _deviceLogTimeout?.cancel();
+    _deviceLogTimeout = null;
+    _deviceLogPullEpoch++;
+    _deviceLogAssembler.reset();
     _logNotifyTimer?.cancel();
     _logNotifyTimer = null;
     _logNotificationPending = false;
@@ -6979,7 +7238,7 @@ class DeviceSessionView {
 }
 
 /// Immutable physical identity and model information retained by the primary
-/// controller for a secondary macOS session. It deliberately contains no
+/// controller for a secondary desktop session. It deliberately contains no
 /// authkey: authentication material remains in the child controller and the
 /// device-scoped secure store only.
 class _AdditionalSessionContext {
@@ -7003,9 +7262,8 @@ class ResourceInstallDevice {
   final String name;
 }
 
-/// Lightweight peripheral identity used only by the macOS RFCOMM bridge.
-/// CoreBluetooth GATT operations still require a real scan result; this type
-/// is never passed to the GATT plugin.
+/// Lightweight peripheral identity used by saved-device RFCOMM reconnects. It
+/// is never passed to GATT operations, which still require a real scan result.
 class _PersistedPeripheral implements Peripheral {
   const _PersistedPeripheral(this.uuid);
 
