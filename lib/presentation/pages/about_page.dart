@@ -564,7 +564,7 @@ class _LegalNotice extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Icon(Icons.shield_outlined, color: colorScheme.onSurface),
             const SizedBox(width: 16),

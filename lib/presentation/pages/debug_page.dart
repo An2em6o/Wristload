@@ -262,25 +262,20 @@ class _DebugPageState extends State<DebugPage> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.warning_amber_rounded,
-                          size: 20,
-                          color: colors.error,
+                    Container(
+                      key: const ValueKey('boot-mode-warning-banner'),
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colors.errorContainer,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '警告！使用此功能切换手表模式可能导致手表数据丢失且无法找回！',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colors.onErrorContainer,
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '警告！使用此功能切换手表模式可能导致手表数据丢失且无法找回！',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: colors.error,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Wrap(

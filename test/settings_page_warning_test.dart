@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wristload/domain/device_profile.dart';
 import 'package:wristload/domain/install_preference_store.dart';
 import 'package:wristload/domain/resource_install_target_policy.dart';
+import 'package:wristload/application/device_controller.dart';
 import 'package:wristload/presentation/pages/settings_page.dart';
 
 void main() {
@@ -83,6 +84,44 @@ void main() {
     expect(changed, isNull);
   });
 
+  testWidgets('双设备安装目标只勾选指定设备', (tester) async {
+    const firstId = 'device-aa28';
+    const secondId = 'device-ccf2';
+    ResourceInstallTargetPolicy? changed;
+    await tester.pumpWidget(
+      _settingsPage(
+        resourceInstallTargetPolicy: const ResourceInstallTargetPolicy(
+          mode: ResourceInstallTargetMode.automaticDevice,
+          automaticDeviceId: firstId,
+        ),
+        resourceInstallDevices: const [
+          ResourceInstallDevice(id: firstId, name: 'Xiaomi Smart Band 10 AA28'),
+          ResourceInstallDevice(
+            id: secondId,
+            name: 'Xiaomi Smart Band 9 Pro CCF2',
+          ),
+        ],
+        onResourceInstallTargetPolicyChanged: (value) => changed = value,
+      ),
+    );
+
+    final deviceTiles = tester
+        .widgetList<RadioListTile<String>>(find.byType(RadioListTile<String>))
+        .where((tile) => tile.value.startsWith('device:'))
+        .toList();
+    expect(deviceTiles, hasLength(2));
+    expect(
+      deviceTiles.where((tile) => tile.value == tile.groupValue),
+      hasLength(1),
+    );
+    expect(deviceTiles.first.value, 'device:$firstId');
+    expect(deviceTiles.first.groupValue, 'device:$firstId');
+
+    await tester.tap(find.text('Xiaomi Smart Band 9 Pro CCF2'));
+    expect(changed?.mode, ResourceInstallTargetMode.automaticDevice);
+    expect(changed?.automaticDeviceId, secondId);
+  });
+
   testWidgets('macOS 显示强制安装表盘开关并转发变更', (tester) async {
     bool? changed;
     await tester.pumpWidget(
@@ -115,6 +154,9 @@ Widget _settingsPage({
   onResourceInstallTargetPolicyChanged,
   bool showForceWatchfaceInstall = false,
   ValueChanged<bool>? onForceWatchfaceInstallChanged,
+  ResourceInstallTargetPolicy resourceInstallTargetPolicy =
+      const ResourceInstallTargetPolicy(),
+  List<ResourceInstallDevice> resourceInstallDevices = const [],
 }) => MaterialApp(
   home: Scaffold(
     body: TransferSettingsPage(
@@ -123,6 +165,8 @@ Widget _settingsPage({
       connectionModeEnabled: true,
       segmentIntervalMs: 5,
       massWindowSize: 3,
+      resourceInstallTargetPolicy: resourceInstallTargetPolicy,
+      resourceInstallDevices: resourceInstallDevices,
       onConnectionModeChanged: (_) {},
       onSegmentIntervalChanged: (_) {},
       onMassWindowSizeChanged: (_) {},

@@ -40,6 +40,7 @@ Widget _buildHomePage(WristloadPageContext context) => HomePage(
   controller: context.controller,
   preferredInstallTarget: context.preferredInstallTarget,
   onPreferredInstallTargetChanged: context.onPreferredInstallTargetChanged,
+  onManageDevices: context.onEditAuthKey,
   diagnosticLogWindowOpen: context.diagnosticLogWindowOpen,
   onDiagnosticLogWindowChanged: context.onDiagnosticLogWindowChanged,
 );
@@ -63,6 +64,7 @@ class HomePage extends StatelessWidget {
     required this.controller,
     required this.preferredInstallTarget,
     required this.onPreferredInstallTargetChanged,
+    this.onManageDevices,
     this.diagnosticLogWindowOpen = false,
     this.onDiagnosticLogWindowChanged,
     super.key,
@@ -71,6 +73,7 @@ class HomePage extends StatelessWidget {
   final DeviceController controller;
   final InstallPreference preferredInstallTarget;
   final ValueChanged<InstallPreference> onPreferredInstallTargetChanged;
+  final VoidCallback? onManageDevices;
   final bool diagnosticLogWindowOpen;
   final ValueChanged<bool>? onDiagnosticLogWindowChanged;
 
@@ -745,35 +748,6 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  Future<void> _reconnectAdditionalDeviceWithAuthKey(
-    BuildContext context,
-    DeviceSessionView session,
-  ) async {
-    // A previously entered but not-yet-persisted authkey belongs to this child
-    // controller. Do not force the user to re-enter it after a transient
-    // pairing, SDP, or RFCOMM failure. A rejected f=27 clears it deliberately.
-    if (session.controller.authKey != null) {
-      await controller.reconnectAdditionalDevice(session.id);
-      return;
-    }
-    final saved = await controller.readAuthKeyFor(session.id);
-    if (!context.mounted) return;
-    if (saved != null) {
-      await controller.reconnectAdditionalDevice(session.id);
-      return;
-    }
-    final authKey = await _requestAdditionalDeviceAuthKey(
-      context,
-      title: '重新输入 authkey',
-      deviceName: session.name,
-    );
-    if (authKey == null || !context.mounted) return;
-    await controller.reconnectAdditionalDevice(
-      session.id,
-      authKeyOverride: authKey,
-    );
-  }
-
   Future<String?> _requestAdditionalDeviceAuthKey(
     BuildContext context, {
     required String title,
@@ -865,9 +839,6 @@ class HomePage extends StatelessWidget {
     final additionalScanResults = controller.scanResults
         .where(controller.isAdditionalMacOSDeviceCandidate)
         .toList(growable: false);
-    final additionalSavedBindings = controller.authKeyBindings
-        .where((binding) => !controller.isDeviceAlreadyInSession(binding.id))
-        .toList(growable: false);
     final primaryDeviceId = device?.uuid.toString();
     final multiDeviceMode =
         connected && primaryDeviceId != null && additionalSessions.isNotEmpty;
@@ -896,12 +867,10 @@ class HomePage extends StatelessWidget {
                           automaticDeviceId: deviceId,
                         ),
                       ),
-                  onReconnectPrimary: controller.reconnect,
                   onDisconnectPrimary: controller.disconnect,
-                  onReconnectAdditional: (session) =>
-                      _reconnectAdditionalDeviceWithAuthKey(context, session),
                   onDisconnectAdditional: (session) =>
                       controller.disconnectAdditionalDevice(session.id),
+                  onManageDevices: onManageDevices,
                 )
               else
                 Card(
@@ -1053,7 +1022,7 @@ class HomePage extends StatelessWidget {
                                         style: theme.textTheme.bodyMedium,
                                       ),
                                       Text(
-                                        '找到 ${controller.scanResults.where(isInstallableDiscovery).length} 个可安装设备',
+                                        '找到 ${controller.scanResults.where(isInstallableDiscovery).length} 个可连接设备',
                                         style: theme.textTheme.bodySmall
                                             ?.copyWith(
                                               color: colors.onSurfaceVariant,
@@ -1085,22 +1054,6 @@ class HomePage extends StatelessWidget {
                             spacing: 8,
                             runSpacing: 8,
                             children: [
-                              FilledButton.icon(
-                                onPressed: controller.isConnectionBusy
-                                    ? null
-                                    : controller.reconnect,
-                                icon: controller.isConnectionBusy
-                                    ? const SizedBox.square(
-                                        dimension: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.refresh),
-                                label: Text(
-                                  controller.isConnectionBusy ? '正在连接' : '重新连接',
-                                ),
-                              ),
                               OutlinedButton.icon(
                                 key: const ValueKey('disconnect-button'),
                                 onPressed: controller.isConnectionBusy
@@ -1108,6 +1061,12 @@ class HomePage extends StatelessWidget {
                                     : controller.disconnect,
                                 icon: const Icon(Icons.link_off),
                                 label: const Text('断开连接'),
+                              ),
+                              FilledButton.tonalIcon(
+                                key: const ValueKey('manage-devices-button'),
+                                onPressed: onManageDevices,
+                                icon: const Icon(Icons.devices_outlined),
+                                label: const Text('设备管理'),
                               ),
                               if (Platform.isWindows &&
                                   controller.supportsAdditionalWindowsDevices)
@@ -1169,29 +1128,6 @@ class HomePage extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (Platform.isMacOS &&
-                  controller.supportsAdditionalMacOSDevices &&
-                  (connected || additionalSessions.isNotEmpty) &&
-                  additionalSavedBindings.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _SavedDevicesSection(
-                  bindings: additionalSavedBindings,
-                  enabled: controller.canScan,
-                  onConnect: (binding) =>
-                      _connectAdditionalSavedDeviceWithAuthKey(
-                        context,
-                        binding,
-                      ),
-                ),
-              ] else if (!connected &&
-                  controller.authKeyBindings.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _SavedDevicesSection(
-                  bindings: controller.authKeyBindings,
-                  enabled: !controller.isConnectionBusy && controller.canScan,
-                  onConnect: controller.connectSavedDevice,
-                ),
-              ],
               if (Platform.isMacOS &&
                   controller.supportsAdditionalMacOSDevices &&
                   (connected || additionalSessions.isNotEmpty) &&
@@ -1266,95 +1202,6 @@ class _WatchfaceTargetIssue {
   final String error;
 }
 
-class _SavedDevicesSection extends StatelessWidget {
-  const _SavedDevicesSection({
-    required this.bindings,
-    required this.enabled,
-    required this.onConnect,
-  });
-
-  final List<AuthKeyBinding> bindings;
-  final bool enabled;
-  final Future<bool> Function(AuthKeyBinding binding) onConnect;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    return Container(
-      key: const ValueKey('saved-devices-section'),
-      decoration: BoxDecoration(
-        border: Border.all(color: colors.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-            child: Row(
-              children: [
-                Icon(Icons.history, size: 20, color: colors.onSurface),
-                const SizedBox(width: 8),
-                Text('已保存设备', style: theme.textTheme.titleMedium),
-                const Spacer(),
-                Text(
-                  '${bindings.length} 台',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          for (var index = 0; index < bindings.length; index++) ...[
-            if (index > 0) const Divider(height: 1),
-            _SavedDeviceTile(
-              binding: bindings[index],
-              enabled: enabled,
-              onConnect: onConnect,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SavedDeviceTile extends StatelessWidget {
-  const _SavedDeviceTile({
-    required this.binding,
-    required this.enabled,
-    required this.onConnect,
-  });
-
-  final AuthKeyBinding binding;
-  final bool enabled;
-  final Future<bool> Function(AuthKeyBinding binding) onConnect;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-    leading: const Icon(Icons.watch_outlined),
-    title: Text(
-      binding.name.trim().isEmpty ? '已保存设备' : binding.name,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    ),
-    subtitle: Text(
-      binding.id,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontFamily: 'monospace'),
-    ),
-    trailing: OutlinedButton.icon(
-      key: ValueKey('connect-saved-device-${binding.id}'),
-      onPressed: enabled ? () => unawaited(onConnect(binding)) : null,
-      icon: const Icon(Icons.link, size: 18),
-      label: const Text('连接'),
-    ),
-  );
-}
-
 class _AdditionalDeviceScanResults extends StatelessWidget {
   const _AdditionalDeviceScanResults({
     required this.results,
@@ -1389,20 +1236,18 @@ class _MultiDeviceSessionPanel extends StatelessWidget {
     required this.additionalSessions,
     required this.targetPolicy,
     required this.onSetTarget,
-    required this.onReconnectPrimary,
     required this.onDisconnectPrimary,
-    required this.onReconnectAdditional,
     required this.onDisconnectAdditional,
+    required this.onManageDevices,
   });
 
   final DeviceSessionView primarySession;
   final List<DeviceSessionView> additionalSessions;
   final ResourceInstallTargetPolicy targetPolicy;
   final ValueChanged<String> onSetTarget;
-  final Future<void> Function() onReconnectPrimary;
   final Future<void> Function() onDisconnectPrimary;
-  final Future<void> Function(DeviceSessionView session) onReconnectAdditional;
   final Future<void> Function(DeviceSessionView session) onDisconnectAdditional;
+  final VoidCallback? onManageDevices;
 
   bool _isTarget(String deviceId) =>
       targetPolicy.mode == ResourceInstallTargetMode.automaticDevice &&
@@ -1425,12 +1270,10 @@ class _MultiDeviceSessionPanel extends StatelessWidget {
                 session: session,
                 selectedTarget: _isTarget(session.id),
                 onSetTarget: () => onSetTarget(session.id),
-                onReconnect: session.isPrimary
-                    ? onReconnectPrimary
-                    : () => onReconnectAdditional(session),
                 onDisconnect: session.isPrimary
                     ? onDisconnectPrimary
                     : () => onDisconnectAdditional(session),
+                onManageDevices: onManageDevices,
               ),
           ];
           if (!horizontal) {
@@ -1443,17 +1286,27 @@ class _MultiDeviceSessionPanel extends StatelessWidget {
               ],
             );
           }
-          return IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var index = 0; index < cards.length; index++) ...[
-                  Expanded(child: cards[index]),
-                  if (index != cards.length - 1)
-                    const VerticalDivider(width: 1),
-                ],
-              ],
-            ),
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var index = 0; index < cards.length; index++)
+                Expanded(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: index == 0
+                          ? null
+                          : Border(
+                              left: BorderSide(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                    ),
+                    child: cards[index],
+                  ),
+                ),
+            ],
           );
         },
       ),
@@ -1466,16 +1319,16 @@ class _MultiDeviceCard extends StatelessWidget {
     required this.session,
     required this.selectedTarget,
     required this.onSetTarget,
-    required this.onReconnect,
     required this.onDisconnect,
+    required this.onManageDevices,
     super.key,
   });
 
   final DeviceSessionView session;
   final bool selectedTarget;
   final VoidCallback onSetTarget;
-  final Future<void> Function() onReconnect;
   final Future<void> Function() onDisconnect;
+  final VoidCallback? onManageDevices;
 
   @override
   Widget build(BuildContext context) {
@@ -1623,12 +1476,10 @@ class _MultiDeviceCard extends StatelessWidget {
           const SizedBox(height: 16),
           _MultiDeviceActions(
             sessionId: session.id,
-            busy: busy,
-            connecting: connecting,
             selectedTarget: selectedTarget,
-            onReconnect: onReconnect,
             onDisconnect: onDisconnect,
             onSetTarget: onSetTarget,
+            onManageDevices: onManageDevices,
           ),
         ],
       ),
@@ -1639,40 +1490,31 @@ class _MultiDeviceCard extends StatelessWidget {
 class _MultiDeviceActions extends StatelessWidget {
   const _MultiDeviceActions({
     required this.sessionId,
-    required this.busy,
-    required this.connecting,
     required this.selectedTarget,
-    required this.onReconnect,
     required this.onDisconnect,
     required this.onSetTarget,
+    required this.onManageDevices,
   });
 
   final String sessionId;
-  final bool busy;
-  final bool connecting;
   final bool selectedTarget;
-  final Future<void> Function() onReconnect;
   final Future<void> Function() onDisconnect;
   final VoidCallback onSetTarget;
+  final VoidCallback? onManageDevices;
 
   @override
   Widget build(BuildContext context) {
-    final reconnectButton = FilledButton.tonalIcon(
-      key: ValueKey('reconnect-device-$sessionId'),
-      onPressed: busy ? null : () => unawaited(onReconnect()),
-      icon: busy
-          ? const SizedBox.square(
-              dimension: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.refresh, size: 18),
-      label: Text(connecting ? '正在连接' : '重新连接'),
-    );
     final disconnectButton = OutlinedButton.icon(
       key: ValueKey('disconnect-device-$sessionId'),
       onPressed: () => unawaited(onDisconnect()),
       icon: const Icon(Icons.link_off, size: 18),
       label: const Text('断开连接'),
+    );
+    final manageButton = FilledButton.tonalIcon(
+      key: ValueKey('manage-devices-$sessionId'),
+      onPressed: onManageDevices,
+      icon: const Icon(Icons.devices_outlined, size: 18),
+      label: const Text('设备管理'),
     );
     final targetButton = selectedTarget
         ? FilledButton.tonalIcon(
@@ -1693,9 +1535,9 @@ class _MultiDeviceActions extends StatelessWidget {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              reconnectButton,
-              const SizedBox(height: 8),
               disconnectButton,
+              const SizedBox(height: 8),
+              manageButton,
               const SizedBox(height: 8),
               targetButton,
             ],
@@ -1706,9 +1548,9 @@ class _MultiDeviceActions extends StatelessWidget {
           children: [
             Row(
               children: [
-                Expanded(child: reconnectButton),
-                const SizedBox(width: 8),
                 Expanded(child: disconnectButton),
+                const SizedBox(width: 8),
+                Expanded(child: manageButton),
               ],
             ),
             const SizedBox(height: 8),

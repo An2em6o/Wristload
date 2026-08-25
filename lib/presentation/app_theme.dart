@@ -18,10 +18,16 @@ ThemeData buildWristloadTheme({
   final isTianyiBlue = seedColor.toARGB32() == 0xFF66CCFF;
   final colorScheme = isTianyiBlue
       ? generatedScheme.copyWith(
-          // Use the lighter tonal-button role for primary actions. The
-          // unlocked swatch and persisted seed remain the exact #66CCFF.
-          primary: generatedScheme.primaryContainer,
-          onPrimary: generatedScheme.onPrimaryContainer,
+          // Dark-mode primaryContainer is intentionally low-luminance and
+          // makes Tianyi Blue controls look desaturated. Keep the existing
+          // light scheme, but use the unlocked #66CCFF swatch directly for
+          // dark-mode primary actions and indicators.
+          primary: brightness == Brightness.dark
+              ? seedColor
+              : generatedScheme.primaryContainer,
+          onPrimary: brightness == Brightness.dark
+              ? Colors.black
+              : generatedScheme.onPrimaryContainer,
           surfaceTint: seedColor,
         )
       : generatedScheme;

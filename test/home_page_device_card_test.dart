@@ -30,6 +30,7 @@ void main() {
             controller: controller,
             preferredInstallTarget: InstallPreference.watchface,
             onPreferredInstallTargetChanged: (_) {},
+            onManageDevices: () {},
           ),
         ),
       ),
@@ -44,6 +45,8 @@ void main() {
     expect(find.text('100%'), findsOneWidget);
     expect(find.byIcon(Icons.battery_std), findsOneWidget);
     expect(find.text(deviceUuid.toString()), findsOneWidget);
+    expect(find.text('设备管理'), findsOneWidget);
+    expect(find.text('重新连接'), findsNothing);
 
     final progress = tester.widget<LinearProgressIndicator>(
       find.byType(LinearProgressIndicator),
@@ -122,7 +125,7 @@ void main() {
     expect(find.text('安装'), findsNothing);
   });
 
-  testWidgets('主页显示已保存设备并可直接发起连接', (tester) async {
+  testWidgets('主页不显示已保存设备区域', (tester) async {
     final binding = AuthKeyBinding(
       id: '896fcdf6-7b32-1f45-e5f5-fa09eec80de3',
       name: 'Xiaomi Smart Band 10',
@@ -134,36 +137,47 @@ void main() {
 
     await _pumpHome(tester, controller);
 
-    expect(find.byKey(const ValueKey('saved-devices-section')), findsOneWidget);
-    expect(find.text('已保存设备'), findsOneWidget);
-    expect(find.text('Xiaomi Smart Band 10'), findsOneWidget);
-    expect(find.text(binding.id), findsOneWidget);
-
-    await tester.tap(
-      find.byKey(ValueKey('connect-saved-device-${binding.id}')),
-    );
-    await tester.pump();
-
-    expect(controller.requestedBindings, [binding]);
+    expect(find.byKey(const ValueKey('saved-devices-section')), findsNothing);
+    expect(find.text('已保存设备'), findsNothing);
+    expect(find.text('Xiaomi Smart Band 10'), findsNothing);
+    expect(find.text(binding.id), findsNothing);
   });
 
-  testWidgets('连接处理中保留历史设备列表但禁用直连按钮', (tester) async {
-    final binding = AuthKeyBinding(
-      id: '896fcdf6-7b32-1f45-e5f5-fa09eec80de3',
-      name: 'Xiaomi Smart Band 10',
-      uuid: '896fcdf6-7b32-1f45-e5f5-fa09eec80de3',
-      updatedAt: DateTime(2026, 8, 15),
-    );
-    final controller = _SavedDevicesController([binding])..sppConnecting = true;
+  testWidgets('第二设备连接失败时双卡仍正常渲染', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final primaryId = UUID.fromAddress('A1:B2:C3:D4:E5:F6');
+    final secondaryId = UUID.fromAddress('06:05:04:03:02:01');
+    final secondary = _ConnectionStateController(connected: false)
+      ..error = 'RFCOMM 连接失败';
+    final controller =
+        _MultiDeviceController(
+            DeviceSessionView(
+              id: secondaryId.toString(),
+              name: 'Xiaomi Smart Band 9 Pro CCF2',
+              controller: secondary,
+              isPrimary: false,
+            ),
+          )
+          ..connectedDevice = _TestPeripheral(primaryId)
+          ..connectedDeviceName = 'Xiaomi Smart Band 10 AA28'
+          ..batteryPercent = 42;
+    addTearDown(secondary.dispose);
     addTearDown(controller.dispose);
 
     await _pumpHome(tester, controller);
 
-    expect(find.byKey(const ValueKey('saved-devices-section')), findsOneWidget);
-    final button = tester.widget<OutlinedButton>(
-      find.byKey(ValueKey('connect-saved-device-${binding.id}')),
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const ValueKey('multi-device-session-panel')),
+      findsOneWidget,
     );
-    expect(button.onPressed, isNull);
+    expect(find.text('Xiaomi Smart Band 10 AA28'), findsOneWidget);
+    expect(find.text('Xiaomi Smart Band 9 Pro CCF2'), findsOneWidget);
+    expect(find.text('42%'), findsOneWidget);
+    expect(find.text('连接失败'), findsOneWidget);
+    expect(find.text('RFCOMM 连接失败'), findsOneWidget);
   });
 }
 
@@ -175,6 +189,7 @@ Future<void> _pumpHome(WidgetTester tester, DeviceController controller) async {
           controller: controller,
           preferredInstallTarget: InstallPreference.watchface,
           onPreferredInstallTargetChanged: (_) {},
+          onManageDevices: () {},
         ),
       ),
     ),
@@ -202,19 +217,20 @@ class _SavedDevicesController extends _ConnectionStateController {
   _SavedDevicesController(this.savedBindings) : super(connected: false);
 
   final List<AuthKeyBinding> savedBindings;
-  final List<AuthKeyBinding> requestedBindings = [];
-
   @override
   List<AuthKeyBinding> get authKeyBindings => savedBindings;
 
   @override
   set authKeyBindings(List<AuthKeyBinding> value) {}
+}
+
+class _MultiDeviceController extends _ConnectionStateController {
+  _MultiDeviceController(this.secondarySession) : super(connected: true);
+
+  final DeviceSessionView secondarySession;
 
   @override
-  Future<bool> connectSavedDevice(AuthKeyBinding binding) async {
-    requestedBindings.add(binding);
-    return true;
-  }
+  List<DeviceSessionView> get additionalDeviceSessions => [secondarySession];
 }
 
 class _TestPeripheral implements Peripheral {

@@ -2656,6 +2656,10 @@ class DeviceController extends ChangeNotifier {
 
     await beginScan();
     if (_disposed || !_isScanning || isConnectionBusy || isConnected) return;
+    // The stop/restart warm-up below is only required by CoreBluetooth. On
+    // Windows the first passive scan must remain active so nearby devices can
+    // continue to appear without another user action.
+    if (!_isMacOS) return;
     final startupGeneration = _scanGeneration;
 
     // Keep the first native discovery session alive for at least one run-loop

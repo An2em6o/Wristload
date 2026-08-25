@@ -67,6 +67,12 @@ void main() {
     );
     await tester.pump();
 
+    expect(find.text('Demo'), findsOneWidget);
+    expect(find.text('com.example.demo'), findsOneWidget);
+    expect(find.text('版本'), findsNothing);
+    expect(find.text('指纹'), findsNothing);
+    expect(find.text('1'), findsNothing);
+    expect(find.text('01:AB'), findsNothing);
     expect(find.text('启动'), findsOneWidget);
     await tester.tap(find.text('启动'));
     await tester.pump();

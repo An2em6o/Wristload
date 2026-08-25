@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../application/device_controller.dart';
 import '../../domain/watch_app.dart';
@@ -317,26 +316,10 @@ class _AppCard extends StatelessWidget {
   final bool uninstallEnabled;
   final bool showLaunch;
 
-  String _fingerprint() => app.fingerprint
-      .map((value) => value.toRadixString(16).padLeft(2, '0'))
-      .join(':')
-      .toUpperCase();
-
-  Future<void> _copyFingerprint(BuildContext context) async {
-    final value = _fingerprint();
-    if (value.isEmpty) return;
-    await Clipboard.setData(ClipboardData(text: value));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('指纹已复制')));
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final fingerprint = _fingerprint();
     return Card(
       color: colors.surfaceContainer,
       margin: const EdgeInsets.only(bottom: 12),
@@ -368,12 +351,14 @@ class _AppCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      Text(
-                        app.packageName,
-                        style: theme.textTheme.bodySmall,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      if (app.appName.trim().isNotEmpty &&
+                          app.packageName.trim().isNotEmpty)
+                        Text(
+                          app.packageName,
+                          style: theme.textTheme.bodySmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                     ],
                   ),
                 ),
@@ -414,46 +399,9 @@ class _AppCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 18,
-              runSpacing: 8,
-              children: [
-                _Detail(label: '版本', value: '${app.versionCode}'),
-                if (fingerprint.isNotEmpty)
-                  InkWell(
-                    onTap: () => _copyFingerprint(context),
-                    borderRadius: BorderRadius.circular(6),
-                    child: _Detail(label: '指纹', value: fingerprint),
-                  ),
-              ],
-            ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _Detail extends StatelessWidget {
-  const _Detail({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: theme.textTheme.labelMedium),
-        const SizedBox(height: 2),
-        SelectableText(
-          value,
-          style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
-        ),
-      ],
     );
   }
 }

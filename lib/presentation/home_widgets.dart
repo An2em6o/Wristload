@@ -162,7 +162,7 @@ class _ScanResultsListState extends State<ScanResultsList> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ScanGroupHeader(label: '可安装的设备 · ${installable.length}'),
+        _ScanGroupHeader(label: '可连接的设备 · ${installable.length}'),
         for (final result in installable)
           ScanTile(
             key: ValueKey(result.peripheral.uuid.toString()),
@@ -172,7 +172,7 @@ class _ScanResultsListState extends State<ScanResultsList> {
           ),
         const SizedBox(height: 8),
         _ScanGroupHeader(
-          label: '其他设备 · ${other.length}（不支持安装）',
+          label: '其他设备 · ${other.length}（不支持连接）',
           expanded: _showOtherDevices,
           onToggle: () => setState(() {
             _showOtherDevices = !_showOtherDevices;
@@ -310,7 +310,7 @@ class ScanTile extends StatelessWidget {
                             foregroundColor: colors.onSecondaryContainer,
                           ),
                           _DeviceLabel(
-                            label: '✓ 可安装',
+                            label: '✓ 可连接',
                             foregroundColor: colors.tertiary,
                             borderColor: colors.tertiary,
                           ),

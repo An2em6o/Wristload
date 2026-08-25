@@ -56,7 +56,6 @@ Widget _buildSettingsPage(WristloadPageContext context) => TransferSettingsPage(
   onAutoOpenDiagnosticLogChanged: context.onAutoOpenDiagnosticLogChanged,
   onPreferredInstallTargetChanged: context.onPreferredInstallTargetChanged,
   onReplayOobe: context.onReplayOobe,
-  onEditAuthKey: context.onEditAuthKey,
 );
 
 class TransferSettingsPage extends StatelessWidget {
@@ -87,7 +86,6 @@ class TransferSettingsPage extends StatelessWidget {
     this.onAutoOpenDiagnosticLogChanged,
     this.onReplayOobe,
     this.onThemeSeedChanged,
-    this.onEditAuthKey,
     required this.onPreferredInstallTargetChanged,
     super.key,
   });
@@ -119,7 +117,6 @@ class TransferSettingsPage extends StatelessWidget {
   final ValueChanged<bool>? onAutoOpenDiagnosticLogChanged;
   final VoidCallback? onReplayOobe;
   final ValueChanged<Color>? onThemeSeedChanged;
-  final VoidCallback? onEditAuthKey;
   final ValueChanged<InstallPreference> onPreferredInstallTargetChanged;
 
   @override
@@ -217,15 +214,6 @@ class TransferSettingsPage extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right),
               enabled: onReplayOobe != null,
               onTap: onReplayOobe,
-            ),
-            const Divider(height: 40),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.vpn_key_outlined),
-              title: const Text('修改绑定设备 authkey'),
-              trailing: const Icon(Icons.chevron_right),
-              enabled: onEditAuthKey != null,
-              onTap: onEditAuthKey,
             ),
             const Divider(height: 40),
             Text('传输', style: theme.textTheme.titleMedium),
@@ -338,34 +326,47 @@ class _ResourceInstallTargetSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const allConnectedValue = 'mode:allConnected';
+    const manualValue = 'mode:manual';
+    final selectedValue = switch (policy.mode) {
+      ResourceInstallTargetMode.allConnected => allConnectedValue,
+      ResourceInstallTargetMode.manual => manualValue,
+      ResourceInstallTargetMode.automaticDevice =>
+        'device:${policy.automaticDeviceId ?? ''}',
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('安装目标', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
-        RadioListTile<ResourceInstallTargetMode>(
+        RadioListTile<String>(
           contentPadding: EdgeInsets.zero,
-          value: ResourceInstallTargetMode.allConnected,
-          groupValue: policy.mode,
+          value: allConnectedValue,
+          groupValue: selectedValue,
           title: const Text('所有已连接设备'),
           onChanged: onChanged == null
               ? null
               : (_) => unawaited(_requestAllConnectedEnable(context)),
         ),
-        RadioListTile<ResourceInstallTargetMode>(
+        RadioListTile<String>(
           contentPadding: EdgeInsets.zero,
-          value: ResourceInstallTargetMode.manual,
-          groupValue: policy.mode,
+          value: manualValue,
+          groupValue: selectedValue,
           title: const Text('每次选择'),
           onChanged: onChanged == null
               ? null
-              : (mode) => onChanged!(ResourceInstallTargetPolicy(mode: mode!)),
+              : (_) => onChanged!(
+                  const ResourceInstallTargetPolicy(
+                    mode: ResourceInstallTargetMode.manual,
+                  ),
+                ),
         ),
         for (final device in devices)
-          RadioListTile<ResourceInstallTargetMode>(
+          RadioListTile<String>(
+            key: ValueKey('automatic-install-device-${device.id}'),
             contentPadding: EdgeInsets.zero,
-            value: ResourceInstallTargetMode.automaticDevice,
-            groupValue: policy.mode,
+            value: 'device:${device.id}',
+            groupValue: selectedValue,
             title: Text(device.name.isEmpty ? '已连接设备' : device.name),
             onChanged: onChanged == null
                 ? null
@@ -679,7 +680,7 @@ class _ThemeColorPreview extends StatelessWidget {
               _ThemePreviewChip(
                 key: const ValueKey('theme-preview-installable'),
                 colors: colors,
-                label: '可安装',
+                label: '可连接',
               ),
             ],
           ),

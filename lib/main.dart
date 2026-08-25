@@ -629,6 +629,8 @@ class _AppShellState extends State<AppShell> {
   int? _scheduledConnectionFailureReportId;
   int? _visibleConnectionFailureReportId;
   bool _initialScanScheduled = false;
+  bool _initialScanInFlight = false;
+  bool _initialScanCompleted = false;
   bool _pairingScanScheduled = false;
   late bool _wasConnectionActive;
   String? _lastPerformanceState;
@@ -684,25 +686,7 @@ class _AppShellState extends State<AppShell> {
     _recordSelectedPage();
     widget.controller.addListener(_handleControllerChanged);
     _handleControllerChanged();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _initialScanScheduled) return;
-      _initialScanScheduled = true;
-      if (_selectedIndex != 0 ||
-          widget.controller.isConnected ||
-          widget.controller.isConnectionBusy) {
-        return;
-      }
-      // Startup must remain passive: do not connect a previously saved device
-      // until the user explicitly starts the connection flow. A scan is still
-      // allowed here so the home page can populate the device browser.
-      if (!mounted ||
-          widget.controller.isConnected ||
-          widget.controller.isConnectionBusy ||
-          widget.controller.isScanning) {
-        return;
-      }
-      await widget.controller.beginStartupScan();
-    });
+    _scheduleInitialScan();
   }
 
   @override
@@ -737,6 +721,7 @@ class _AppShellState extends State<AppShell> {
       );
     }
     final active = _connectionActive;
+    _scheduleInitialScan();
     // V2 devices can briefly replace their first RFCOMM socket immediately
     // after f=27.  A connection is only over once it has left the verified,
     // connecting, and native-teardown states, not merely when sessionReady
@@ -752,6 +737,53 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     _wasConnectionActive = active;
+  }
+
+  void _scheduleInitialScan() {
+    if (!mounted ||
+        _initialScanCompleted ||
+        _initialScanScheduled ||
+        _initialScanInFlight) {
+      return;
+    }
+    if (widget.controller.isScanning) {
+      _initialScanCompleted = true;
+      return;
+    }
+    if (widget.controller.isConnected || widget.controller.isConnectionBusy) {
+      return;
+    }
+    // The Windows Bluetooth state can still be initializing during the first
+    // frame. Keep the one-shot startup request pending until the controller
+    // reports that scanning is available instead of losing it permanently.
+    if (!widget.controller.canScan) return;
+
+    _initialScanScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _initialScanScheduled = false;
+      if (!mounted ||
+          _initialScanCompleted ||
+          _initialScanInFlight ||
+          widget.controller.isConnected ||
+          widget.controller.isConnectionBusy) {
+        return;
+      }
+      if (widget.controller.isScanning) {
+        _initialScanCompleted = true;
+        return;
+      }
+      if (!widget.controller.canScan) return;
+
+      _initialScanInFlight = true;
+      try {
+        // Startup discovery is passive: it populates nearby devices but never
+        // selects a saved binding or starts a connection.
+        await widget.controller.beginStartupScan();
+        _initialScanCompleted = widget.controller.isScanning;
+      } finally {
+        _initialScanInFlight = false;
+      }
+    });
   }
 
   void _recordSelectedPage() {
@@ -1134,7 +1166,7 @@ class _AuthKeyBindingPickerState extends State<_AuthKeyBindingPicker> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('历史绑定设备'),
+    title: const Text('设备管理'),
     content: SizedBox(
       width: 420,
       child: _bindings.isEmpty
@@ -1225,6 +1257,7 @@ class _GlobalConnectionStatus extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final connectedSessions = controller.connectedDeviceSessions;
     final connected = controller.isConnected;
     final connecting = !connected && controller.isConnecting;
     final disconnecting =
@@ -1234,9 +1267,7 @@ class _GlobalConnectionStatus extends StatelessWidget {
                 controller.connectedProfile?.displayName ??
                 '')
             .trim();
-    final label = connected
-        ? (deviceName.isEmpty ? '已连接设备' : deviceName)
-        : connecting
+    final label = connecting
         ? '正在连接${deviceName.isEmpty ? '' : '：$deviceName'}'
         : disconnecting
         ? '正在断开设备'
@@ -1254,28 +1285,94 @@ class _GlobalConnectionStatus extends StatelessWidget {
         const SizedBox(width: 8),
         const Text('Wristload'),
         const SizedBox(width: 16),
+        if (connectedSessions.isNotEmpty)
+          Flexible(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (
+                  var index = 0;
+                  index < connectedSessions.length;
+                  index++
+                ) ...[
+                  if (index > 0) const SizedBox(width: 18),
+                  Flexible(
+                    child: _GlobalConnectedDeviceLabel(
+                      session: connectedSessions[index],
+                      dotKey: index == 0
+                          ? const ValueKey('global-connection-status-dot')
+                          : ValueKey(
+                              'global-connection-status-dot-${connectedSessions[index].id}',
+                            ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          )
+        else ...[
+          Container(
+            key: const ValueKey('global-connection-status-dot'),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: connecting || disconnecting
+                  ? colors.tertiary
+                  : colors.error,
+            ),
+          ),
+          const SizedBox(width: 7),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(color: colors.onSurfaceVariant),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _GlobalConnectedDeviceLabel extends StatelessWidget {
+  const _GlobalConnectedDeviceLabel({
+    required this.session,
+    required this.dotKey,
+  });
+
+  final DeviceSessionView session;
+  final Key dotKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = session.name.trim();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
         Container(
-          key: const ValueKey('global-connection-status-dot'),
+          key: dotKey,
           width: 8,
           height: 8,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: connected
-                ? colors.primary
-                : (connecting || disconnecting
-                      ? colors.tertiary
-                      : colors.error),
+            color: theme.colorScheme.primary,
           ),
         ),
         const SizedBox(width: 7),
         Flexible(
           child: Text(
-            label,
+            name.isEmpty ? '已连接设备' : name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(
-              context,
-            ).textTheme.labelLarge?.copyWith(color: colors.onSurfaceVariant),
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       ],

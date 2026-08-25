@@ -45,7 +45,7 @@ void main() {
     expect(find.text('当前平台不支持独立日志窗口'), findsOneWidget);
   });
 
-  testWidgets('扫描结果按安装能力分组且其他设备可折叠', (tester) async {
+  testWidgets('扫描结果按连接能力分组且其他设备可折叠', (tester) async {
     final installable = _discovery(
       address: 'A1:B2:C3:D4:E5:F6',
       name: 'Xiaomi Smart Band 9 Pro',
@@ -69,10 +69,10 @@ void main() {
       ),
     );
 
-    expect(find.text('可安装的设备 · 1'), findsOneWidget);
-    expect(find.text('其他设备 · 1（不支持安装）'), findsOneWidget);
+    expect(find.text('可连接的设备 · 1'), findsOneWidget);
+    expect(find.text('其他设备 · 1（不支持连接）'), findsOneWidget);
     expect(find.text('小米手环 9 Pro'), findsOneWidget);
-    expect(find.text('✓ 可安装'), findsOneWidget);
+    expect(find.text('✓ 可连接'), findsOneWidget);
     expect(find.text('非手环设备'), findsOneWidget);
     expect(find.byType(FilledButton), findsOneWidget);
     expect(find.textContaining('V2 传输'), findsNothing);
@@ -81,7 +81,7 @@ void main() {
     await tester.tap(find.text('连接'));
     expect(connected, same(installable));
 
-    await tester.tap(find.text('其他设备 · 1（不支持安装）'));
+    await tester.tap(find.text('其他设备 · 1（不支持连接）'));
     await tester.pump();
     expect(find.text('Wireless Speaker'), findsNothing);
     expect(find.text('非手环设备'), findsNothing);
