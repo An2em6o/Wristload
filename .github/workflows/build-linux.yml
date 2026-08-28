@@ -15,6 +15,8 @@ on:
 jobs:
   build-linux-x64:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -50,3 +52,16 @@ jobs:
           path: |
             build/linux/x64/release/bundle/
             dist/*.deb
+
+      - name: 获取版本号
+        id: version
+        run: echo "version=$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: 创建 Release 并上传 deb
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.deb
+          tag_name: linux-x64-${{ steps.version.outputs.version }}
+          name: Wristload Linux x86-64 v${{ steps.version.outputs.version }}
+          generate_release_notes: true
