@@ -1,0 +1,13 @@
+name: wristload_rfcomm_linux
+description: Linux BlueZ RFCOMM/SPP transport bridge for Wristload.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ">=3.9.2 <4.0.0"
+
+flutter:
+  plugin:
+    platforms:
+      linux:
+        pluginClass: WristloadRfcommLinuxPlugin

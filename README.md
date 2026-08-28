@@ -16,7 +16,8 @@
 - 支持本地取消、超时停止、检查点和重连后的源文件一致性检查；
 - Android 已接入 RFCOMM 与安全存储，仍需目标设备真机验收；macOS 已接入
   CoreBluetooth 扫描、IOBluetooth SPP、Keychain 和沙盒文件授权，仍需目标设备真机安装验收；
-  Linux 仅保留明确的不支持提示。
+  Linux 已接入 BlueZ BLE 扫描、经典蓝牙配对、RFCOMM/SPP 传输与 Secret Service
+  安全存储，仍需目标设备真机验收。
 
 ## 自行编译和运行
 
@@ -32,6 +33,9 @@ flutter run -d macos
 
 # 或在 Windows 上运行
 flutter run -d windows
+
+# 或在 Linux 上运行
+flutter run -d linux
 ```
 
 仅构建而不启动时，分别使用：
@@ -39,6 +43,7 @@ flutter run -d windows
 ```sh
 flutter build macos --debug
 flutter build windows --debug
+flutter build linux --debug
 ```
 
 Windows 也提供会先更新页面注册表的构建脚本。PowerShell 中执行：
@@ -48,6 +53,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tool\build_windows_only.ps1
 ```
 
 脚本默认从 `C:\src\flutter` 寻找 Flutter；使用其他位置时传入 `-FlutterRoot`。发布 GUI 可使用 `flutter build macos --release`。
+
+Linux 也提供会先更新页面注册表的构建脚本：
+
+```sh
+tool/build_linux.sh            # debug
+tool/build_linux.sh release    # 发布构建
+```
+
+Linux 构建依赖（Ubuntu/Debian）：
+
+```sh
+sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+  libayatana-appindicator3-dev libsecret-1-dev
+```
+
+其中 `libayatana-appindicator3-dev` 是系统托盘（system_tray）所需，
+`libsecret-1-dev` 是 authkey 安全存储（Secret Service）所需。
+Linux 的经典蓝牙 RFCOMM 传输由本地插件 `plugins/wristload_rfcomm_linux/`
+通过 BlueZ（org.bluez）实现，运行期要求桌面会话可访问系统总线蓝牙。
+
+中国大陆网络环境（pub.dev 直连或代理不可达）请在构建前设置 pub 镜像：
+
+```sh
+export PUB_HOSTED_URL=https://pub.flutter-io.cn
+export FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn
+```
 
 ### macOS TUI
 
@@ -92,7 +123,8 @@ CoreBluetooth 标识映射到已配对的经典蓝牙设备。广播名不唯一
 ## 分层
 
 - `lib/platform/`：基于 `bluetooth_low_energy` 的 BLE 传输，以及各平台 RFCOMM、
-  安全存储、系统时间和沙盒文件桥接；
+  安全存储、系统时间和沙盒文件桥接；Linux 的 RFCOMM/SPP 由本地插件
+  `plugins/wristload_rfcomm_linux/`（BlueZ + GDBus）提供；
 - `lib/domain/`：设备档案、安装任务和协议边界；
 - `lib/domain/protocol/`：私有协议核心（逆向确认的帧与命令，独立实现）；
 - `lib/application/`：状态控制器；

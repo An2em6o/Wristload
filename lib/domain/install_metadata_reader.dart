@@ -23,7 +23,9 @@ class InstallMetadataReader {
   /// an accidental multi-gigabyte read while keeping ample room for media-rich
   /// RPKs and watchfaces.
   static const maxSourceBytes = 256 * 1024 * 1024;
-  static const maxArchiveEntries = 512;
+  // RPK（快应用包）实测可达 500+ 条目（如 smart.box 527 文件），512 上限
+  // 会误拒正常安装包；8192 兼顾 ZIP 炸弹防护（配合 512MB 解压总量上限）。
+  static const maxArchiveEntries = 8192;
   static const maxArchiveExpandedBytes = 512 * 1024 * 1024;
   static const maxManifestBytes = 1024 * 1024;
   static const maxWatchfaceResourceBytes = 128 * 1024 * 1024;

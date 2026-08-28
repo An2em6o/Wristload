@@ -1,5 +1,5 @@
 // GENERATED CODE - DO NOT EDIT.
-// Run tool/generate_page_registry.ps1 after adding or removing a page module.
+// Run tool/generate_page_registry.ps1 or tool/generate_page_registry.dart after adding or removing a page module.
 import 'page_module.dart';
 import 'pages/about_page.dart' as page0;
 import 'pages/apps_page.dart' as page1;

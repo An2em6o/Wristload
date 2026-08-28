@@ -466,12 +466,23 @@ class _DevelopersSection extends StatelessWidget {
       role: 'Devloper',
       avatarAsset: 'assets/developers/ikun-cxkpro.png',
     );
+    const pengchengkai = _DeveloperCard(
+      name: 'pengchegnkai',
+      role: 'Devloper',
+      avatarAsset: 'assets/developers/pengchengkai.jpeg',
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < 680) {
           return const Column(
-            children: [liangYi, SizedBox(height: 12), ikunCxkpro],
+            children: [
+              liangYi,
+              SizedBox(height: 12),
+              ikunCxkpro,
+              SizedBox(height: 12),
+              pengchengkai,
+            ],
           );
         }
         return const Row(
@@ -480,6 +491,8 @@ class _DevelopersSection extends StatelessWidget {
             Expanded(child: liangYi),
             SizedBox(width: 12),
             Expanded(child: ikunCxkpro),
+            SizedBox(width: 12),
+            Expanded(child: pengchengkai),
           ],
         );
       },
@@ -491,12 +504,12 @@ class _DeveloperCard extends StatelessWidget {
   const _DeveloperCard({
     required this.name,
     required this.role,
-    required this.avatarAsset,
+    this.avatarAsset,
   });
 
   final String name;
   final String role;
-  final String avatarAsset;
+  final String? avatarAsset;
 
   @override
   Widget build(BuildContext context) {
@@ -512,15 +525,27 @@ class _DeveloperCard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           child: Row(
             children: [
-              ClipOval(
-                child: Image.asset(
-                  avatarAsset,
-                  width: 72,
-                  height: 72,
-                  fit: BoxFit.cover,
-                  filterQuality: FilterQuality.high,
+              if (avatarAsset != null)
+                ClipOval(
+                  child: Image.asset(
+                    avatarAsset!,
+                    width: 72,
+                    height: 72,
+                    fit: BoxFit.cover,
+                    filterQuality: FilterQuality.high,
+                  ),
+                )
+              else
+                CircleAvatar(
+                  radius: 36,
+                  backgroundColor: colors.primaryContainer,
+                  child: Text(
+                    name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: colors.onPrimaryContainer,
+                    ),
+                  ),
                 ),
-              ),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(

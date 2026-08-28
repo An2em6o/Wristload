@@ -14,6 +14,11 @@ dependencies:
   # Cross-platform BLE central API; Darwin discovery is paired with the
   # macOS Runner's native IOBluetooth RFCOMM bridge.
   bluetooth_low_energy: ^6.2.1
+  # Linux authkey 安全存储（Secret Service / libsecret，如 GNOME Keyring）。
+  flutter_secure_storage: ^9.2.4
+  # Linux RFCOMM/SPP 原生传输桥（本地插件，仅 Linux 构建时编译）。
+  wristload_rfcomm_linux:
+    path: plugins/wristload_rfcomm_linux
   path_provider: ^2.1.4
   crypto: ^3.0.3
   pointycastle: ^3.9.1
@@ -47,3 +52,4 @@ flutter:
     - macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png
     - assets/developers/liang-yi.png
     - assets/developers/ikun-cxkpro.png
+    - assets/developers/pengchengkai.jpeg
