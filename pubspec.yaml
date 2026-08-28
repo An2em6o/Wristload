@@ -1,7 +1,7 @@
 name: wristload
 description: Experimental cross-platform installer for selected Xiaomi Vela wearables.
 publish_to: none
-version: 0.1.0+1
+version: 0.1.1+1
 
 environment:
   sdk: ">=3.9.2 <4.0.0"
