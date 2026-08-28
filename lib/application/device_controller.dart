@@ -6323,9 +6323,13 @@ class DeviceController extends ChangeNotifier {
     // 窗口的批次会因设备累计 ACK 永远等不齐而卡在 0%：设备 ACK N 只确认
     // 已收窗口内的片，剩余片永远等不到确认，最终 12 秒空闲超时。
     // 发送窗口按协商值钳制，保证传输必然推进（慢但稳定）。
+    // 仅 Linux 生效：macOS/Windows 保持原窗口行为（原适配验证过的路径）。
     final negotiatedWindow = 3;
-    final massAckWindow = min(massWindowSize, negotiatedWindow);
-    if (massWindowSize > negotiatedWindow) {
+    final massAckWindow = defaultTargetPlatform == TargetPlatform.linux
+        ? min(massWindowSize, negotiatedWindow)
+        : massWindowSize;
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        massWindowSize > negotiatedWindow) {
       _log(
         '发送窗口钳制：massWindowSize=$massWindowSize → '
         '$negotiatedWindow（设备协商窗口），避免卡 0%。',
@@ -7119,18 +7123,23 @@ class DeviceController extends ChangeNotifier {
     }
 
     try {
-      // 单次 RFCOMM 写入整窗拼接帧（可至 ~48KB）在 Linux 插件侧可能挂起
-      // （业务小帧正常、大帧无返回无日志）。RFCOMM 是字节流，L1 帧边界由
-      // 设备按帧解析，分块写入在协议上等价且规避大写入挂起。
-      const maxWriteChunk = 4096;
-      for (var offset = 0; offset < frames.length; offset += maxWriteChunk) {
-        final end = offset + maxWriteChunk < frames.length
-            ? offset + maxWriteChunk
-            : frames.length;
-        await _transport.rfcommWrite(
-          device.uuid,
-          frames.sublist(offset, end),
-        );
+      // 仅 Linux：单次 RFCOMM 写入整窗拼接帧（可至 ~48KB）在 Linux 插件侧
+      // 可能挂起（业务小帧正常、大帧无返回无日志），故分块写入；RFCOMM 是
+      // 字节流，L1 帧边界由设备按帧解析，分块在协议上等价且规避挂起。
+      // macOS/Windows 保持单次整窗写入（原适配的 WinRT 批量写优化）。
+      if (defaultTargetPlatform == TargetPlatform.linux) {
+        const maxWriteChunk = 4096;
+        for (var offset = 0; offset < frames.length; offset += maxWriteChunk) {
+          final end = offset + maxWriteChunk < frames.length
+              ? offset + maxWriteChunk
+              : frames.length;
+          await _transport.rfcommWrite(
+            device.uuid,
+            frames.sublist(offset, end),
+          );
+        }
+      } else {
+        await _transport.rfcommWrite(device.uuid, frames);
       }
     } on Object {
       for (final (sequence, _) in queued) {
