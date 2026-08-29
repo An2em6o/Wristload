@@ -1,4 +1,4 @@
-name: Build Linux x86-64
+name: Build Desktop (Linux x64 / Windows / macOS)
 
 on:
   workflow_dispatch:
@@ -7,14 +7,33 @@ on:
     paths:
       - 'lib/**'
       - 'linux/**'
+      - 'windows/**'
+      - 'macos/**'
       - 'plugins/**'
       - 'pubspec.yaml'
       - 'tool/**'
       - '.github/workflows/build-linux.yml'
 
 jobs:
-  build-linux-x64:
-    runs-on: ubuntu-latest
+  build-desktop:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            build_cmd: flutter build linux --release
+            package_files: dist/*.deb
+          - os: windows-latest
+            target: windows-x64
+            build_cmd: flutter build windows --release
+            package_files: wristload-windows-x64.zip
+          - os: macos-latest
+            target: macos
+            build_cmd: flutter build macos --release
+            package_files: wristload-macos.zip
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     steps:
@@ -27,7 +46,8 @@ jobs:
           channel: stable
           cache: true
 
-      - name: 安装构建依赖
+      - name: 安装构建依赖（Linux）
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -39,29 +59,43 @@ jobs:
           dart run tool/generate_page_registry.dart
           flutter pub get
 
-      - name: 编译 release（x86-64）
-        run: flutter build linux --release
+      - name: 编译 release
+        run: ${{ matrix.build_cmd }}
 
-      - name: 打包 deb（amd64）
+      - name: 打包 Linux deb（amd64）
+        if: matrix.os == 'ubuntu-latest'
         run: bash tool/build_deb.sh
+
+      - name: 打包 Windows（zip）
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath wristload-windows-x64.zip -Force
+
+      - name: 打包 macOS（zip）
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd build/macos/Build/Products/Release && zip -r "$GITHUB_WORKSPACE/wristload-macos.zip" wristload.app
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: wristload-linux-x64
+          name: wristload-${{ matrix.target }}
           path: |
-            build/linux/x64/release/bundle/
             dist/*.deb
+            *.zip
+          if-no-files-found: warn
 
       - name: 获取版本号
         id: version
+        shell: bash
         run: echo "version=$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: 创建 Release 并上传 deb
+      - name: 创建 Release 并上传
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.deb
-          tag_name: linux-x64-${{ steps.version.outputs.version }}
-          name: Wristload Linux x86-64 v${{ steps.version.outputs.version }}
+          files: ${{ matrix.package_files }}
+          tag_name: ${{ matrix.target }}-${{ steps.version.outputs.version }}
+          name: Wristload ${{ matrix.target }} v${{ steps.version.outputs.version }}
           generate_release_notes: true
