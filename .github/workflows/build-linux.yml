@@ -1,4 +1,4 @@
-name: Build Desktop (Linux x64 / Windows / macOS)
+name: Build Desktop (Linux x64/arm64, Windows x64/arm64, macOS)
 
 on:
   workflow_dispatch:
@@ -25,14 +25,22 @@ jobs:
             target: linux-x64
             build_cmd: flutter build linux --release
             package_files: dist/*.deb
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            build_cmd: flutter build linux --release
+            package_files: dist/*.deb
           - os: windows-latest
             target: windows-x64
             build_cmd: flutter build windows --release
             package_files: wristload-windows-x64.zip
+          - os: windows-11-arm
+            target: windows-arm64
+            build_cmd: flutter build windows --release
+            package_files: wristload-windows-arm64.zip
           - os: macos-latest
-            target: macos
+            target: macos-x64
             build_cmd: flutter build macos --release
-            package_files: wristload-macos.zip
+            package_files: wristload-macos-x64.zip
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -47,7 +55,7 @@ jobs:
           cache: true
 
       - name: 安装构建依赖（Linux）
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -62,20 +70,25 @@ jobs:
       - name: 编译 release
         run: ${{ matrix.build_cmd }}
 
-      - name: 打包 Linux deb（amd64）
-        if: matrix.os == 'ubuntu-latest'
+      - name: 打包 Linux deb（本机架构：amd64 / arm64）
+        if: startsWith(matrix.os, 'ubuntu')
         run: bash tool/build_deb.sh
 
       - name: 打包 Windows（zip）
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows')
         shell: pwsh
         run: |
-          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath wristload-windows-x64.zip -Force
+          $dir = if ("${{ matrix.target }}" -eq "windows-arm64") {
+            "build/windows/arm64/runner/Release"
+          } else {
+            "build/windows/x64/runner/Release"
+          }
+          Compress-Archive -Path "$dir/*" -DestinationPath "wristload-${{ matrix.target }}.zip" -Force
 
       - name: 打包 macOS（zip）
         if: matrix.os == 'macos-latest'
         run: |
-          cd build/macos/Build/Products/Release && zip -r "$GITHUB_WORKSPACE/wristload-macos.zip" wristload.app
+          cd build/macos/Build/Products/Release && zip -r "$GITHUB_WORKSPACE/wristload-macos-x64.zip" wristload.app
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
