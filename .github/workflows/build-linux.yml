@@ -134,6 +134,9 @@ jobs:
           base_image: raspi_4_bookworm:20231109
           cpu: max:cortex-a72
           bind_mount_repository: true
+          # 默认镜像根分区约 2GB：安装构建依赖 + Flutter SDK + 构建产物会
+          # 写满（dpkg: No space left on device）。额外扩容 10GB。
+          image_additional_mb: 10240
           commands: |
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
