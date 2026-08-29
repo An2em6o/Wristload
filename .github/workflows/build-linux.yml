@@ -133,6 +133,20 @@ jobs:
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
             apt-get install -y --no-install-recommends git curl ca-certificates xz-utils unzip clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libayatana-appindicator3-dev libsecret-1-dev
+            # Flutter 3.47 需要支持 -Wno-deprecated-literal-operator 的新版 clang；
+            # bookworm 默认 clang-14 不认识该选项（-Werror 直接失败）。
+            # 优先 apt 装 clang-16，否则从 LLVM 官方源装 clang-18。
+            if ! apt-get install -y --no-install-recommends clang-16 >/dev/null 2>&1; then
+              wget -qO /etc/apt/trusted.gpg.d/llvm.asc https://apt.llvm.org/llvm-snapshot.gpg.key
+              echo "deb [signed-by=/etc/apt/trusted.gpg.d/llvm.asc] http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" > /etc/apt/sources.list.d/llvm.list
+              apt-get update -qq
+              apt-get install -y --no-install-recommends clang-18
+            fi
+            if command -v clang-16 >/dev/null 2>&1; then CLVER=16; else CLVER=18; fi
+            update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$CLVER 100
+            update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$CLVER 100
+            update-alternatives --set clang /usr/bin/clang-$CLVER
+            update-alternatives --set clang++ /usr/bin/clang++-$CLVER
             # 安装 Flutter stable（官方无 arm64 SDK 压缩包，用 git clone +
             # 首次运行自动下载 linux-arm64 engine artifacts）
             git clone -b stable --depth 1 https://github.com/flutter/flutter.git /opt/flutter
