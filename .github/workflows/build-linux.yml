@@ -107,15 +107,7 @@ jobs:
         id: version
         shell: bash
         run: echo "version=$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
-
-      - name: 创建 Release 并上传
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ matrix.package_files }}
-          tag_name: ${{ matrix.target }}-${{ steps.version.outputs.version }}
-          name: Wristload ${{ matrix.target }} v${{ steps.version.outputs.version }}
-          generate_release_notes: true
+      # 各平台产物由 release Job 汇总发布（见文件末尾）。
 
   # Linux arm64：公共 runner 无 arm64 Flutter SDK，改用 arm-runner-action
   # （Chroot + QEMU 用户态仿真）在 x64 主机上模拟 arm64 环境原生构建。
@@ -164,12 +156,35 @@ jobs:
         id: version
         shell: bash
         run: echo "version=$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
+      # 产物由 release Job 汇总发布。
 
-      - name: 创建 Release 并上传
-        if: github.ref == 'refs/heads/main'
+  # 所有平台构建成功后，汇总全部产物到一个 Release。
+  release:
+    name: 汇总发布 Release（全平台）
+    needs: [build-desktop, build-linux-arm64]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载全部构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 获取版本号
+        id: version
+        shell: bash
+        run: echo "version=$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: 创建/更新 Release 并上传全部产物
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.deb
-          tag_name: linux-arm64-${{ steps.version.outputs.version }}
-          name: Wristload linux-arm64 v${{ steps.version.outputs.version }}
+          files: artifacts/**
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Wristload v${{ steps.version.outputs.version }}（全平台：Linux x64/arm64、Windows x64、macOS、Android）
           generate_release_notes: true
