@@ -1400,6 +1400,12 @@ class DeviceController extends ChangeNotifier {
     _clearSppHandshakeState();
     _clearConnectionCandidate();
     _connectionTearingDown = false;
+    // 失败后统一复位扫描标志：连接流程可能在 `_isScanning = false` 之前就
+    // 抛出（如 stopScan 失败），残留 true 会让 beginScan 首行直接 return。
+    if (_isScanning) {
+      _isScanning = false;
+      _transport.stopScan().catchError((Object _) {});
+    }
     _postAuthRecoveryEpoch = null;
     _log(message);
     // The detailed failure report replaces generic timeout/availability
@@ -3357,8 +3363,21 @@ class DeviceController extends ChangeNotifier {
       // answer the legacy BA-DC-FE SPP version query, while L1START succeeds
       // immediately. Skipping that fixed 8-second wait matches the effective
       // fallback path without changing the authenticated protocol.
+      // 先发 SPP 版本查询（App SppVersionReader 同款 BA-DC-FE 帧）：V1 设备回
+      // type=106 版本包；V2 设备不应答时 2 秒超时后直接 L1START，不影响鉴权。
+      _sppAwaitingVersion = true;
+      final versionGate = Completer<bool>();
+      _sppVersionQueryGate = versionGate;
+      await _transport.rfcommWrite(
+        device.uuid,
+        SppProtocol.buildVersionQuery(_sppVersionQuerySeq++),
+      );
+      final versionAnswered = await versionGate.future
+          .timeout(const Duration(seconds: 2), onTimeout: () => false);
+      if (!_isCurrentSppConnection(connectionEpoch)) return;
+      if (versionAnswered) return; // type=106 分支已接管并发起 L1START
       _sppAwaitingVersion = false;
-      _log('RFCOMM 已连接；目标型号已识别为 V2，直接发送 L1START…');
+      _log('RFCOMM 已连接；SPP 版本查询无回包（V2 常见），直接发送 L1START…');
       await _sppSendL1Start(connectionEpoch, device);
     } catch (exception) {
       if (_isCurrentSppConnection(connectionEpoch)) {
@@ -3385,6 +3404,8 @@ class DeviceController extends ChangeNotifier {
   Accumulator _sppAcc = Accumulator();
   int _sppSeq = 0;
   bool _sppAwaitingVersion = false;
+  int _sppVersionQuerySeq = 0;
+  Completer<bool>? _sppVersionQueryGate;
   bool _sppAwaitingAuthConfirm = false;
   Timer? _sppWatchdog;
   DateTime? _authenticatedAt;
@@ -3562,14 +3583,20 @@ class DeviceController extends ChangeNotifier {
         final (type, payload) = packet;
         _log('SppPacket 回包：type=$type payload=${_hex(payload)}');
         if (type == 106) {
-          connectedFirmwareVersion = payload
-              .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
-              .join('.');
+          // 版本回包 payload 通常是可打印 ASCII（如 "2.1.2"）；个别固件回数值
+          // 字节。按可读形式展示，避免 hex 拼接（"32.2e.31.2e.32"）误导。
+          final asText = String.fromCharCodes(payload).trim();
+          final isPrintable = payload.every((b) => b >= 0x20 && b <= 0x7e);
+          connectedFirmwareVersion = isPrintable && asText.isNotEmpty
+              ? asText
+              : payload.map((byte) => '${byte}').join('.');
           _log('  ★ 设备版本：$connectedFirmwareVersion');
           _log('版本确认。发送 L1START_REQ（L1 CMD 帧）…');
+          _completeSppVersionQuery(true);
           unawaited(_sendL1StartFromInboundPacket(connectionEpoch));
         } else {
           _log('  非版本回包（type=$type），仍尝试 L1START…');
+          _completeSppVersionQuery(true);
           unawaited(_sendL1StartFromInboundPacket(connectionEpoch));
         }
         return;
@@ -3745,6 +3772,7 @@ class DeviceController extends ChangeNotifier {
     _connectionTearingDown = true;
     sessionReady = false;
     _sppAwaitingVersion = false;
+    _completeSppVersionQuery(false);
     _clearPendingAuthConfirm();
     connectedClassicAddress = null;
     _sppWatchdog?.cancel();
@@ -3825,7 +3853,15 @@ class DeviceController extends ChangeNotifier {
     _sppWatchdog?.cancel();
     _sppWatchdog = null;
     _sppAwaitingVersion = false;
+    _completeSppVersionQuery(false);
     _clearPendingAuthConfirm();
+  }
+
+  /// 完成（或超时取消）SPP 版本查询等待。已完成的 gate 不再重复 complete。
+  void _completeSppVersionQuery(bool answered) {
+    final gate = _sppVersionQueryGate;
+    _sppVersionQueryGate = null;
+    if (gate != null && !gate.isCompleted) gate.complete(answered);
   }
 
   void _clearPendingAuthConfirm() {

@@ -212,6 +212,15 @@ class BleTransport {
       await _central.startDiscovery();
       _info('BLE 扫描已启动');
     } on Object catch (error) {
+      // BlueZ 在 discovery 已在进行时再次 StartDiscovery 会抛 InProgress /
+      // AlreadyExists（如 stopDiscovery 尚未落地、连接路径的临时 discovery
+      // 残留）。此时扫描实际已在运行，按幂等成功处理。
+      if (_isLinux &&
+          (error.toString().contains('InProgress') ||
+              error.toString().contains('AlreadyExists'))) {
+        _debug('BLE 扫描启动：BlueZ 已在进行 discovery（幂等处理）。');
+        return;
+      }
       _error(
         'BLE 扫描启动失败：$error',
         fields: <String, Object?>{'errorType': error.runtimeType.toString()},
