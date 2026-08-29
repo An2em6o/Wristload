@@ -1,4 +1,4 @@
-name: Build Desktop (Linux x64/arm64, Windows x64/arm64, macOS)
+name: Build Desktop (Linux x64/arm64, Windows x64/arm64, macOS) + Android
 
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
       - 'linux/**'
       - 'windows/**'
       - 'macos/**'
+      - 'android/**'
       - 'plugins/**'
       - 'pubspec.yaml'
       - 'tool/**'
@@ -41,6 +42,10 @@ jobs:
             target: macos-x64
             build_cmd: flutter build macos --release
             package_files: wristload-macos-x64.zip
+          - os: ubuntu-latest
+            target: android
+            build_cmd: flutter build apk --release
+            package_files: build/app/outputs/flutter-apk/app-release.apk
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -54,8 +59,15 @@ jobs:
           channel: stable
           cache: true
 
-      - name: 安装构建依赖（Linux）
-        if: startsWith(matrix.os, 'ubuntu')
+      - name: 安装 JDK 17（Android）
+        if: matrix.target == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装构建依赖（Linux 桌面）
+        if: startsWith(matrix.os, 'ubuntu') && matrix.target != 'android'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -67,11 +79,15 @@ jobs:
           dart run tool/generate_page_registry.dart
           flutter pub get
 
+      - name: 接受 Android SDK 许可
+        if: matrix.target == 'android'
+        run: yes | flutter doctor --android-licenses
+
       - name: 编译 release
         run: ${{ matrix.build_cmd }}
 
       - name: 打包 Linux deb（本机架构：amd64 / arm64）
-        if: startsWith(matrix.os, 'ubuntu')
+        if: startsWith(matrix.os, 'ubuntu') && matrix.target != 'android'
         run: bash tool/build_deb.sh
 
       - name: 打包 Windows（zip）
@@ -97,6 +113,7 @@ jobs:
           path: |
             dist/*.deb
             *.zip
+            build/app/outputs/flutter-apk/*.apk
           if-no-files-found: warn
 
       - name: 获取版本号
