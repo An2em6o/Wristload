@@ -144,7 +144,12 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
               ListTile(
                 leading: const Icon(Icons.memory),
                 title: const Text('固件版本'),
-                subtitle: Text(firmware ?? '未知'),
+                subtitle: Text(
+                  firmware ??
+                      (defaultTargetPlatform == TargetPlatform.linux
+                          ? '未知（Linux 暂无法读取该设备固件版本）'
+                          : '未知'),
+                ),
               ),
               ListTile(
                 leading: const Icon(Icons.bluetooth),
