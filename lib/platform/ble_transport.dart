@@ -212,6 +212,15 @@ class BleTransport {
       await _central.startDiscovery();
       _info('BLE 扫描已启动');
     } on Object catch (error) {
+      // BlueZ 在 discovery 已在进行时再次 StartDiscovery 会抛 InProgress /
+      // AlreadyExists（如 stopDiscovery 尚未落地、连接路径的临时 discovery
+      // 残留）。此时扫描实际已在运行，按幂等成功处理。
+      if (_isLinux &&
+          (error.toString().contains('InProgress') ||
+              error.toString().contains('AlreadyExists'))) {
+        _debug('BLE 扫描启动：BlueZ 已在进行 discovery（幂等处理）。');
+        return;
+      }
       _error(
         'BLE 扫描启动失败：$error',
         fields: <String, Object?>{'errorType': error.runtimeType.toString()},
@@ -226,6 +235,12 @@ class BleTransport {
       await _central.stopDiscovery();
       _info('BLE 扫描已停止');
     } on Object catch (error) {
+      // BlueZ 在设备连接或超时后会自动结束 discovery；此时再停止会抛
+      // “No discovery started”。Linux 上按幂等成功处理，其它平台保持原语义。
+      if (_isLinux && error.toString().contains('No discovery started')) {
+        _debug('BLE 扫描停止：BlueZ 已无进行中的扫描（幂等处理）。');
+        return;
+      }
       _error(
         'BLE 扫描停止失败：$error',
         fields: <String, Object?>{'errorType': error.runtimeType.toString()},
@@ -387,7 +402,7 @@ class BleTransport {
       },
     );
     try {
-      if (_isAndroid) {
+      if (_usesAndroidStyleRfcomm) {
         await _androidMethods.invokeMethod<void>('ensurePermissions');
         await _androidMethods.invokeMethod<void>('pair', _androidAddress(uuid));
         final address = _androidAddress(uuid);
@@ -492,6 +507,7 @@ class BleTransport {
   /// Android 的公开 SDK 不允许应用静默 removeBond，因此保持 false。
   Future<bool> unpairIfPaired(UUID uuid) async {
     if (_isAndroid) return false;
+    if (_isLinux) return false;
     if (_isMacOS) return false;
     _requireRfcommPlatform();
     final hex = uuid.toString().replaceAll('-', '');
@@ -534,7 +550,7 @@ class BleTransport {
       },
     );
     try {
-      if (_isAndroid) {
+      if (_usesAndroidStyleRfcomm) {
         await _androidMethods.invokeMethod<void>('ensurePermissions');
         await _androidMethods.invokeMethod<void>('connect', {
           'address': _androidAddress(uuid),
@@ -791,7 +807,7 @@ class BleTransport {
   }
 
   Future<void> _rfcommWriteDirect(UUID uuid, List<int> data) async {
-    if (_isAndroid) {
+    if (_usesAndroidStyleRfcomm) {
       await _androidMethods.invokeMethod<void>(
         'write',
         Uint8List.fromList(data),
@@ -827,7 +843,7 @@ class BleTransport {
       fields: <String, Object?>{'peripheral': uuid.toString(), 'epoch': epoch},
     );
     try {
-      if (_isAndroid) {
+      if (_usesAndroidStyleRfcomm) {
         await _androidMethods.invokeMethod<void>('disconnect');
         return;
       }
@@ -962,6 +978,11 @@ class BleTransport {
   bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
   bool get _isMacOS => defaultTargetPlatform == TargetPlatform.macOS;
   bool get _isWindows => defaultTargetPlatform == TargetPlatform.windows;
+  bool get _isLinux => defaultTargetPlatform == TargetPlatform.linux;
+
+  /// Android 与 Linux 共用同一个原生 RFCOMM 通道契约
+  /// （`wristload/rfcomm` + `wristload/rfcomm/events`），仅地址解析细节不同。
+  bool get _usesAndroidStyleRfcomm => _isAndroid || _isLinux;
 
   BluetoothAuthorizationStatus _parseMacOSBluetoothAuthorization(
     Object? reply,
@@ -991,8 +1012,9 @@ class BleTransport {
   void _requireRfcommPlatform() {
     if (defaultTargetPlatform != TargetPlatform.windows &&
         !_isAndroid &&
-        !_isMacOS) {
-      throw UnsupportedError('当前平台尚未实现 RFCOMM 真实安装传输（Linux 仅支持 BLE 诊断）。');
+        !_isMacOS &&
+        !_isLinux) {
+      throw UnsupportedError('当前平台尚未实现 RFCOMM 真实安装传输。');
     }
   }
 
@@ -1076,7 +1098,7 @@ class BleTransport {
       'RFCOMM 数据监听注册',
       fields: <String, Object?>{'platform': defaultTargetPlatform.name},
     );
-    if (_isAndroid) {
+    if (_usesAndroidStyleRfcomm) {
       _androidRfcommSubscription ??= _androidEvents
           .receiveBroadcastStream()
           .listen(
@@ -1086,7 +1108,7 @@ class BleTransport {
                   'RFCOMM RX',
                   fields: <String, Object?>{
                     'bytes': value.length,
-                    'platform': 'android',
+                    'platform': defaultTargetPlatform.name,
                     'transport': 'RFCOMM/SPP',
                     'direction': 'RX',
                     'wireHex': _wireHex(value),
@@ -1102,7 +1124,7 @@ class BleTransport {
               _error(
                 'RFCOMM 数据流错误：$error',
                 fields: <String, Object?>{
-                  'platform': 'android',
+                  'platform': defaultTargetPlatform.name,
                   'errorType': error.runtimeType.toString(),
                 },
               );
@@ -1286,17 +1308,12 @@ class BleTransport {
     _androidRfcommSubscription = null;
     await _macosRfcommSubscription?.cancel();
     _macosRfcommSubscription = null;
-    if (!_isAndroid) {
-      if (_isMacOS) {
-        // EventChannel subscriptions are cancelled above; there is no Pigeon
-        // handler to clear on Darwin.
-      } else {
-        const channel = BasicMessageChannel<Object?>(
-          'dev.flutter.pigeon.bluetooth_low_energy_windows.CentralManagerFlutterApi.onRfcommData',
-          StandardMessageCodec(),
-        );
-        channel.setMessageHandler(null);
-      }
+    if (_isWindows) {
+      const channel = BasicMessageChannel<Object?>(
+        'dev.flutter.pigeon.bluetooth_low_energy_windows.CentralManagerFlutterApi.onRfcommData',
+        StandardMessageCodec(),
+      );
+      channel.setMessageHandler(null);
     }
     if (!_rfcommDataController.isClosed) {
       await _rfcommDataController.close();

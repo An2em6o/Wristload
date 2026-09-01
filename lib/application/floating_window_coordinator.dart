@@ -438,6 +438,15 @@ class FloatingWindowCoordinator with WindowListener {
         '${Platform.pathSeparator}app_icon_32.png',
       );
     }
+    if (Platform.isLinux) {
+      // system_tray 的 Linux 实现需要 PNG；app_icon_32.png 已随 flutter_assets
+      // 打包（见 pubspec.yaml assets），直接复用。
+      return _flutterAssetPath(
+        'macos${Platform.pathSeparator}Runner${Platform.pathSeparator}'
+        'Assets.xcassets${Platform.pathSeparator}AppIcon.appiconset'
+        '${Platform.pathSeparator}app_icon_32.png',
+      );
+    }
     return _flutterAssetPath(
       'windows${Platform.pathSeparator}runner${Platform.pathSeparator}'
       'resources${Platform.pathSeparator}app_icon.ico',
@@ -550,6 +559,11 @@ class FloatingWindowCoordinator with WindowListener {
     unawaited(windowManager.hide());
     if (_enabled) unawaited(showFloatingWindow());
   }
+
+  /// 主窗口关闭监听是否已由本协调器注册（`windowManager.addListener`）。
+  /// 主窗口在协调器初始化失败或尚未初始化时需要自己的关闭兜底，因此把
+  /// 这一状态暴露给宿主，避免两处监听重复处理同一次关闭。
+  bool get isInitialized => _initialized;
 
   Future<void> dispose() async {
     if (_disposed) return;

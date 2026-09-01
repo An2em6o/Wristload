@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../domain/device_profile.dart';
 import '../domain/auth_key_binding.dart';
+import '../domain/known_devices_store.dart';
 import '../domain/last_device_store.dart';
 import '../domain/auto_connect_preference.dart';
 import '../domain/connection_issue.dart';
@@ -33,6 +34,7 @@ import '../domain/protocol/transport_constants.dart';
 import '../domain/verification_gate.dart';
 import '../platform/ble_transport.dart';
 import '../platform/desktop_v2_connection.dart';
+import '../platform/linux_v2_connection.dart';
 import '../platform/macos_v2_connection.dart';
 import '../platform/windows_v2_connection.dart';
 import '../platform/auth_key_store.dart';
@@ -545,6 +547,7 @@ class DeviceController extends ChangeNotifier {
   static final _secureStorage = AuthKeyStore();
   static final _authKeyBindingStore = AuthKeyBindingStore();
   static final _lastDeviceStore = LastDeviceStore();
+  static final _knownDevicesStore = KnownDevicesStore();
   static final _autoConnectPreferenceStore = AutoConnectPreferenceStore();
   static final _transferSettings = TransferSettingsStore();
 
@@ -1397,6 +1400,12 @@ class DeviceController extends ChangeNotifier {
     _clearSppHandshakeState();
     _clearConnectionCandidate();
     _connectionTearingDown = false;
+    // 失败后统一复位扫描标志：连接流程可能在 `_isScanning = false` 之前就
+    // 抛出（如 stopScan 失败），残留 true 会让 beginScan 首行直接 return。
+    if (_isScanning) {
+      _isScanning = false;
+      _transport.stopScan().catchError((Object _) {});
+    }
     _postAuthRecoveryEpoch = null;
     _log(message);
     // The detailed failure report replaces generic timeout/availability
@@ -1811,7 +1820,8 @@ class DeviceController extends ChangeNotifier {
     // directly for historical devices; this avoids a discovery window (and
     // the fragile BLE advertisement refresh) while keeping GATT devices on
     // the existing scan-backed path below.
-    if (defaultTargetPlatform == TargetPlatform.macOS) {
+    if (defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux) {
       final profile = DeviceProfile.matchAdvertisementName(binding.name);
       UUID? uuid;
       try {
@@ -1838,7 +1848,7 @@ class DeviceController extends ChangeNotifier {
         connectedDeviceName = binding.name.trim();
         connectedClassicAddress = null;
         connectedProfile = profile;
-        _log('历史设备使用 macOS 持久化蓝牙 ID 直连，跳过 BLE 扫描与系统配对。');
+        _log('历史设备使用持久化蓝牙 ID 直连，跳过 BLE 扫描与系统配对。');
         notifyListeners();
         try {
           await _connectDesktopV2(peripheral, profile, directIdentity: true);
@@ -1865,6 +1875,78 @@ class DeviceController extends ChangeNotifier {
     unawaited(_tryConnectRequestedSavedDevice());
     return true;
   }
+
+  /// 从"已保存设备"列表直连：有 authkey 绑定则复用 connectSavedDevice
+  /// （自动用已存 key 鉴权）；没有绑定则请求扫描匹配连接（resolve 命中
+  /// 极快），鉴权阶段再引导输入 key。
+  Future<bool> connectKnownDevice(KnownDeviceRecord record) async {
+    if (_disposed || isConnectionBusy || isConnected) return false;
+    final binding = authKeyBindings
+        .where((b) => _sameDeviceId(b.id, record.id))
+        .firstOrNull;
+    if (binding != null) {
+      _log('已保存设备 ${record.name} 存在 authkey 绑定，直接连接。');
+      return connectSavedDevice(binding);
+    }
+    _log('已保存设备 ${record.name} 无 authkey 绑定，尝试免扫描直连（鉴权时输入 key）。');
+    // 与 connectSavedDevice 的 macOS/Linux 直连分支对称：_PersistedPeripheral
+    // 的 uuid 尾部即经典 MAC，Linux pairDevice 用它直接 resolve，跳过 BLE 扫描。
+    final profile = DeviceProfile.matchAdvertisementName(record.name);
+    UUID? uuid;
+    try {
+      uuid = UUID.fromString(record.id);
+    } on Object {
+      uuid = null;
+    }
+    if (profile != null &&
+        profile.generation == ProtocolGeneration.v2Vela &&
+        uuid != null) {
+      _requestedSavedDeviceId = null;
+      _requestedSavedDeviceName = null;
+      _savedDeviceRequestTimer?.cancel();
+      _savedDeviceRequestTimer = null;
+      _autoConnectInFlight = true;
+      final peripheral = _PersistedPeripheral(uuid);
+      _connectionIssues.selectTarget(record.id);
+      _authKeyRejectedEpoch = null;
+      _resumeScanningAfterConnectionEnd = false;
+      _clearConnectionCandidate();
+      _connectionAttemptInProgress = true;
+      _connectionTearingDown = false;
+      _lastPeripheral = peripheral;
+      connectedDeviceName = record.name.trim();
+      connectedClassicAddress = null;
+      connectedProfile = profile;
+      _log('历史设备免扫描直连，跳过 BLE 扫描与系统配对。');
+      notifyListeners();
+      try {
+        await _connectDesktopV2(peripheral, profile, directIdentity: true);
+      } finally {
+        _autoConnectInFlight = false;
+      }
+      return true;
+    }
+    _log('历史设备 ID 或型号不可用于免扫描直连，回退扫描匹配。');
+    _requestedSavedDeviceId = record.id;
+    _requestedSavedDeviceName = record.name;
+    _autoConnectInFlight = false;
+    _savedDeviceRequestTimer?.cancel();
+    _savedDeviceRequestTimer = Timer(const Duration(seconds: 20), () {
+      if (_requestedSavedDeviceId != null && !_autoConnectInFlight) {
+        _log('历史设备连接请求超时：扫描中未找到匹配设备。');
+        _requestedSavedDeviceId = null;
+        _requestedSavedDeviceName = null;
+        notifyListeners();
+      }
+    });
+    await beginScan();
+    unawaited(_tryConnectRequestedSavedDevice());
+    return true;
+  }
+
+  /// 读取连接过的设备历史（最近连接在前）。
+  Future<List<KnownDeviceRecord>> loadKnownDevices() =>
+      _knownDevicesStore.readAll();
 
   Future<void> _tryConnectRequestedSavedDevice() async {
     final requestedId = _requestedSavedDeviceId;
@@ -2052,6 +2134,12 @@ class DeviceController extends ChangeNotifier {
           : advertisedName.trim();
       await _lastDeviceStore.write(id: id, name: name);
       _lastDeviceRecord = LastDeviceRecord(id: id, name: name);
+      // 记住此设备到"已保存设备"列表（多设备历史，供主页直接选择连接）。
+      await _knownDevicesStore.upsert(
+        id: id,
+        name: name,
+        address: connectedClassicAddress,
+      );
     });
   }
 
@@ -2791,8 +2879,12 @@ class DeviceController extends ChangeNotifier {
     _log('设备名称校验通过：$advertisedName → ${profile.displayName}。');
     notifyListeners();
     if ((defaultTargetPlatform == TargetPlatform.windows ||
-            defaultTargetPlatform == TargetPlatform.macOS) &&
+            defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.linux) &&
         profile.generation == ProtocolGeneration.v2Vela) {
+      // Linux 同样走无 GATT 的经典蓝牙 SPP 路径：手环 9 的 fe95 服务在
+      // 未加密 LE 连接上不暴露（BlueZ 枚举不到），GATT 服务发现必然为空；
+      // 主传输（authkey 鉴权与安装）都在 RFCOMM/SPP 上，无需依赖 GATT。
       await _connectDesktopV2(result.peripheral, profile);
       return;
     }
@@ -2827,6 +2919,7 @@ class DeviceController extends ChangeNotifier {
         switch (defaultTargetPlatform) {
           TargetPlatform.windows => const WindowsV2Connection(),
           TargetPlatform.macOS => const MacosV2Connection(),
+          TargetPlatform.linux => const LinuxV2Connection(),
           _ => throw UnsupportedError(
             'Desktop V2 connection is unsupported on $defaultTargetPlatform.',
           ),
@@ -2900,6 +2993,19 @@ class DeviceController extends ChangeNotifier {
           await Future<void>.delayed(const Duration(milliseconds: 800));
           if (connectionSession != _sessionEpoch) return;
         }
+      }
+      if (defaultTargetPlatform == TargetPlatform.linux) {
+        // 小米手环 9 的 BLE 服务枚举要求加密链路，而
+        // bluetooth_low_energy_linux 的 connect 不建立配对。先完成 BlueZ
+        // 经典蓝牙配对（bonding，幂等），后续 GATT 连接才能解析出
+        // MI Wear 服务（fe95）。配对失败会让连接失败，避免继续发送帧。
+        _log('Linux：先建立 BlueZ 配对（加密链路前提），再枚举 GATT 服务…');
+        connectedClassicAddress = await _transport.pairDevice(
+          peripheral.uuid,
+          advertisedName: connectedDeviceName ?? connectedProfile?.displayName,
+        );
+        if (connectionSession != _sessionEpoch) return;
+        _log('Linux 配对完成，开始 GATT 服务发现。');
       }
       services = await _transport.connectAndDiscover(peripheral);
       ownsGattConnection = true;
@@ -3257,8 +3363,21 @@ class DeviceController extends ChangeNotifier {
       // answer the legacy BA-DC-FE SPP version query, while L1START succeeds
       // immediately. Skipping that fixed 8-second wait matches the effective
       // fallback path without changing the authenticated protocol.
+      // 先发 SPP 版本查询（App SppVersionReader 同款 BA-DC-FE 帧）：V1 设备回
+      // type=106 版本包；V2 设备不应答时 2 秒超时后直接 L1START，不影响鉴权。
+      _sppAwaitingVersion = true;
+      final versionGate = Completer<bool>();
+      _sppVersionQueryGate = versionGate;
+      await _transport.rfcommWrite(
+        device.uuid,
+        SppProtocol.buildVersionQuery(_sppVersionQuerySeq++),
+      );
+      final versionAnswered = await versionGate.future
+          .timeout(const Duration(seconds: 2), onTimeout: () => false);
+      if (!_isCurrentSppConnection(connectionEpoch)) return;
+      if (versionAnswered) return; // type=106 分支已接管并发起 L1START
       _sppAwaitingVersion = false;
-      _log('RFCOMM 已连接；目标型号已识别为 V2，直接发送 L1START…');
+      _log('RFCOMM 已连接；SPP 版本查询无回包（V2 常见），直接发送 L1START…');
       await _sppSendL1Start(connectionEpoch, device);
     } catch (exception) {
       if (_isCurrentSppConnection(connectionEpoch)) {
@@ -3285,6 +3404,8 @@ class DeviceController extends ChangeNotifier {
   Accumulator _sppAcc = Accumulator();
   int _sppSeq = 0;
   bool _sppAwaitingVersion = false;
+  int _sppVersionQuerySeq = 0;
+  Completer<bool>? _sppVersionQueryGate;
   bool _sppAwaitingAuthConfirm = false;
   Timer? _sppWatchdog;
   DateTime? _authenticatedAt;
@@ -3462,14 +3583,20 @@ class DeviceController extends ChangeNotifier {
         final (type, payload) = packet;
         _log('SppPacket 回包：type=$type payload=${_hex(payload)}');
         if (type == 106) {
-          connectedFirmwareVersion = payload
-              .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
-              .join('.');
+          // 版本回包 payload 通常是可打印 ASCII（如 "2.1.2"）；个别固件回数值
+          // 字节。按可读形式展示，避免 hex 拼接（"32.2e.31.2e.32"）误导。
+          final asText = String.fromCharCodes(payload).trim();
+          final isPrintable = payload.every((b) => b >= 0x20 && b <= 0x7e);
+          connectedFirmwareVersion = isPrintable && asText.isNotEmpty
+              ? asText
+              : payload.map((byte) => '${byte}').join('.');
           _log('  ★ 设备版本：$connectedFirmwareVersion');
           _log('版本确认。发送 L1START_REQ（L1 CMD 帧）…');
+          _completeSppVersionQuery(true);
           unawaited(_sendL1StartFromInboundPacket(connectionEpoch));
         } else {
           _log('  非版本回包（type=$type），仍尝试 L1START…');
+          _completeSppVersionQuery(true);
           unawaited(_sendL1StartFromInboundPacket(connectionEpoch));
         }
         return;
@@ -3645,6 +3772,7 @@ class DeviceController extends ChangeNotifier {
     _connectionTearingDown = true;
     sessionReady = false;
     _sppAwaitingVersion = false;
+    _completeSppVersionQuery(false);
     _clearPendingAuthConfirm();
     connectedClassicAddress = null;
     _sppWatchdog?.cancel();
@@ -3725,7 +3853,15 @@ class DeviceController extends ChangeNotifier {
     _sppWatchdog?.cancel();
     _sppWatchdog = null;
     _sppAwaitingVersion = false;
+    _completeSppVersionQuery(false);
     _clearPendingAuthConfirm();
+  }
+
+  /// 完成（或超时取消）SPP 版本查询等待。已完成的 gate 不再重复 complete。
+  void _completeSppVersionQuery(bool answered) {
+    final gate = _sppVersionQueryGate;
+    _sppVersionQueryGate = null;
+    if (gate != null && !gate.isCompleted) gate.complete(answered);
   }
 
   void _clearPendingAuthConfirm() {
@@ -6219,7 +6355,22 @@ class DeviceController extends ChangeNotifier {
     // Complete L1 frames are concatenated into one RFCOMM stream write;
     // frame boundaries, sequence numbers, cumulative ACK handling, and
     // timeout behavior stay unchanged for the selected transfer window.
-    final massAckWindow = massWindowSize;
+    // 设备协商的 L1 接收窗口为 3 片（见 setMassWindowSize 的提示）。超过协商
+    // 窗口的批次会因设备累计 ACK 永远等不齐而卡在 0%：设备 ACK N 只确认
+    // 已收窗口内的片，剩余片永远等不到确认，最终 12 秒空闲超时。
+    // 发送窗口按协商值钳制，保证传输必然推进（慢但稳定）。
+    // 仅 Linux 生效：macOS/Windows 保持原窗口行为（原适配验证过的路径）。
+    final negotiatedWindow = 3;
+    final massAckWindow = defaultTargetPlatform == TargetPlatform.linux
+        ? min(massWindowSize, negotiatedWindow)
+        : massWindowSize;
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        massWindowSize > negotiatedWindow) {
+      _log(
+        '发送窗口钳制：massWindowSize=$massWindowSize → '
+        '$negotiatedWindow（设备协商窗口），避免卡 0%。',
+      );
+    }
     var confirmedFileBytes = sentLength;
     _beginTransferTiming(confirmedBytes: sentLength);
     _publishTask(
@@ -7008,7 +7159,24 @@ class DeviceController extends ChangeNotifier {
     }
 
     try {
-      await _transport.rfcommWrite(device.uuid, frames);
+      // 仅 Linux：单次 RFCOMM 写入整窗拼接帧（可至 ~48KB）在 Linux 插件侧
+      // 可能挂起（业务小帧正常、大帧无返回无日志），故分块写入；RFCOMM 是
+      // 字节流，L1 帧边界由设备按帧解析，分块在协议上等价且规避挂起。
+      // macOS/Windows 保持单次整窗写入（原适配的 WinRT 批量写优化）。
+      if (defaultTargetPlatform == TargetPlatform.linux) {
+        const maxWriteChunk = 4096;
+        for (var offset = 0; offset < frames.length; offset += maxWriteChunk) {
+          final end = offset + maxWriteChunk < frames.length
+              ? offset + maxWriteChunk
+              : frames.length;
+          await _transport.rfcommWrite(
+            device.uuid,
+            frames.sublist(offset, end),
+          );
+        }
+      } else {
+        await _transport.rfcommWrite(device.uuid, frames);
+      }
     } on Object {
       for (final (sequence, _) in queued) {
         _pendingAcks.remove(sequence);

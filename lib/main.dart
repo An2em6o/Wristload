@@ -46,7 +46,7 @@ Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   _installGlobalErrorHandlers();
   await appLogger.initializePersistence();
-  if (Platform.isWindows || Platform.isMacOS) {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
     await windowManager.ensureInitialized();
     final currentWindow = await WindowController.fromCurrentEngine();
     if (currentWindow.arguments == diagnosticLogWindowArgument) {
@@ -58,10 +58,10 @@ Future<void> main(List<String> args) async {
       runApp(const DiagnosticLogWindowApp());
       return;
     }
-    if (Platform.isWindows || Platform.isMacOS) {
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
       await windowManager.setPreventClose(true);
     }
-    if ((Platform.isWindows || Platform.isMacOS) &&
+    if ((Platform.isWindows || Platform.isMacOS || Platform.isLinux) &&
         currentWindow.arguments == floatingInstallWindowArgument) {
       appLogger.info(
         'floating install window engine started',
@@ -106,7 +106,7 @@ Future<void> main(List<String> args) async {
   );
   runApp(
     WristloadApp(
-      desktopIntegrationEnabled: Platform.isWindows || Platform.isMacOS,
+      desktopIntegrationEnabled: Platform.isWindows || Platform.isMacOS || Platform.isLinux,
       initialOobeCompleted: startupValues[0] as bool,
       initialPreference: startupValues[1] as InstallPreference,
       initialThemeSeedColor: initialThemeSeedColor,
@@ -166,7 +166,7 @@ class WristloadApp extends StatefulWidget {
 }
 
 class _WristloadAppState extends State<WristloadApp>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, WindowListener {
   final controller = DeviceController(logger: appLogger);
   final _performanceDiagnostics = PerformanceDiagnosticService();
   final _appShellKey = GlobalKey<_AppShellState>();
@@ -197,6 +197,12 @@ class _WristloadAppState extends State<WristloadApp>
     if (Platform.isMacOS) {
       WidgetsBinding.instance.addObserver(this);
     }
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      // 主窗口关闭监听兜底：FloatingWindowCoordinator 初始化成功后也会注册
+      // 同一监听并自行处理关闭；未初始化时（如未完成 OOBE）这里保证点关闭
+      // 按钮能真正退出进程，而不是被 setPreventClose 静默拦截。
+      windowManager.addListener(this);
+    }
     _oobeCompleted = widget.initialOobeCompleted;
     _preferredInstallTarget = widget.initialPreference;
     _autoOpenDiagnosticLog = widget.initialAutoOpenDiagnosticLog;
@@ -220,7 +226,7 @@ class _WristloadAppState extends State<WristloadApp>
     if (widget.desktopIntegrationEnabled && _oobeCompleted) {
       unawaited(_initializeFloatingWindow());
     }
-    if ((Platform.isWindows || Platform.isMacOS) && _autoOpenDiagnosticLog) {
+    if ((Platform.isWindows || Platform.isMacOS || Platform.isLinux) && _autoOpenDiagnosticLog) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_setDiagnosticLogWindowOpen(true));
       });
@@ -309,10 +315,10 @@ class _WristloadAppState extends State<WristloadApp>
           : null,
       diagnosticLogWindowOpen: _diagnosticLogWindowOpen,
       autoOpenDiagnosticLog: _autoOpenDiagnosticLog,
-      onDiagnosticLogWindowChanged: (Platform.isWindows || Platform.isMacOS)
+      onDiagnosticLogWindowChanged: (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
           ? _setDiagnosticLogWindowOpen
           : null,
-      onAutoOpenDiagnosticLogChanged: (Platform.isWindows || Platform.isMacOS)
+      onAutoOpenDiagnosticLogChanged: (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
           ? _setAutoOpenDiagnosticLog
           : null,
       performanceDiagnostics: _performanceDiagnostics,
@@ -497,14 +503,25 @@ class _WristloadAppState extends State<WristloadApp>
     } on Object {
       // A blocked desktop plugin must not leave the process behind.
     } finally {
-      if (Platform.isWindows) exit(0);
+      if (Platform.isWindows || Platform.isLinux) exit(0);
     }
+  }
+
+  @override
+  void onWindowClose() {
+    // 协调器注册监听后自行处理关闭（托盘隐藏或优雅退出）；未初始化时这里
+    // 兜底直接退出，避免关闭按钮被 setPreventClose 拦截后进程无法结束。
+    if (_floatingWindowCoordinator.isInitialized) return;
+    unawaited(_exitApplication());
   }
 
   @override
   void dispose() {
     if (Platform.isMacOS) {
       WidgetsBinding.instance.removeObserver(this);
+    }
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      windowManager.removeListener(this);
     }
     controller.queueInstallPreparer = null;
     unawaited(_floatingWindowCoordinator.dispose());
@@ -560,11 +577,11 @@ class _WristloadAppState extends State<WristloadApp>
           ? (enabled) => unawaited(_setFloatingInstallWindowEnabled(enabled))
           : null,
       autoOpenDiagnosticLog: _autoOpenDiagnosticLog,
-      onAutoOpenDiagnosticLogChanged: (Platform.isWindows || Platform.isMacOS)
+      onAutoOpenDiagnosticLogChanged: (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
           ? _setAutoOpenDiagnosticLog
           : null,
       diagnosticLogWindowOpen: _diagnosticLogWindowOpen,
-      onDiagnosticLogWindowChanged: (Platform.isWindows || Platform.isMacOS)
+      onDiagnosticLogWindowChanged: (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
           ? _setDiagnosticLogWindowOpen
           : null,
       themeSeedColor: _themeController.seedColor,

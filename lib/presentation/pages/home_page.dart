@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../../application/device_controller.dart';
 import '../../application/diagnostic_log_service.dart';
 import '../../domain/auth_key_binding.dart';
+import '../../domain/known_devices_store.dart';
 import '../../domain/firmware_package_inspector.dart';
 import '../../domain/install_file_classifier.dart';
 import '../../domain/install_models.dart';
@@ -973,6 +974,14 @@ class HomePage extends StatelessWidget {
                           ),
                         ],
                         const SizedBox(height: 12),
+                        if (!connected) ...[
+                          _KnownDevicesSection(
+                            controller: controller,
+                            onConnect: (record) => unawaited(
+                              controller.connectKnownDevice(record),
+                            ),
+                          ),
+                        ],
                         if (!connected && controller.bluetoothUnavailable) ...[
                           _BluetoothUnavailableBanner(
                             message: controller.bluetoothStateMessage,
@@ -1560,6 +1569,76 @@ class _MultiDeviceActions extends StatelessWidget {
       },
     );
   }
+}
+
+class _KnownDevicesSection extends StatelessWidget {
+  const _KnownDevicesSection({
+    required this.controller,
+    required this.onConnect,
+  });
+
+  final DeviceController controller;
+  final ValueChanged<KnownDeviceRecord> onConnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => FutureBuilder<List<KnownDeviceRecord>>(
+        future: controller.loadKnownDevices(),
+        builder: (context, snapshot) {
+          final devices = snapshot.data ?? const <KnownDeviceRecord>[];
+          if (devices.isEmpty) return const SizedBox.shrink();
+          final bindings = controller.authKeyBindings;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('已保存设备', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              ...devices.map((record) {
+                final bound = bindings.any(
+                  (b) => b.id.toLowerCase() == record.id.toLowerCase(),
+                );
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  child: ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.watch_outlined),
+                    title: Text(
+                      record.name.trim().isEmpty ? '已保存设备' : record.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      [
+                        '上次连接 ${_formatRelativeTime(record.lastConnectedAt)}',
+                        if (bound) 'authkey 已保存',
+                      ].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => onConnect(record),
+                  ),
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+String _formatRelativeTime(DateTime time) {
+  final difference = DateTime.now().difference(time);
+  if (difference.inMinutes < 1) return '刚刚';
+  if (difference.inHours < 1) return '${difference.inMinutes} 分钟前';
+  if (difference.inDays < 1) return '${difference.inHours} 小时前';
+  if (difference.inDays < 30) return '${difference.inDays} 天前';
+  return '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')}';
 }
 
 class _BluetoothUnavailableBanner extends StatelessWidget {

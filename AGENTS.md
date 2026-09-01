@@ -18,8 +18,9 @@ This file is part of the repository and MUST be committed to Git. Read it before
 
 ### Platform connection separation
 
-- macOS and Windows connection logic are two separate modules. Keep macOS-specific behavior in `lib/platform/macos_v2_connection.dart` and Windows-specific behavior in `lib/platform/windows_v2_connection.dart`.
+- macOS, Windows and Linux connection logic are separate modules. Keep macOS-specific behavior in `lib/platform/macos_v2_connection.dart`, Windows-specific behavior in `lib/platform/windows_v2_connection.dart`, and Linux-specific behavior in `lib/platform/linux_v2_connection.dart`.
 - `lib/platform/desktop_v2_connection.dart` contains only the shared interface/contract and platform-neutral types. It must not contain OS-specific branching or implementation details.
+- Linux RFCOMM/SPP transport lives in the local plugin `plugins/wristload_rfcomm_linux/` (BlueZ/GDBus). It exposes the same channel contract as the Android bridge (`wristload/rfcomm` + `wristload/rfcomm/events`); `lib/platform/ble_transport.dart` routes Android and Linux through the shared `_usesAndroidStyleRfcomm` path.
 - Do not merge macOS and Windows pairing, identity resolution, GATT, RFCOMM/SPP setup, timeout handling, or native bridge calls into one implementation file.
 - Platform selection belongs at the composition boundary (for example, the controller/factory), while each platform adapter owns its own preparation sequence. Shared authentication, SPP protocol, and connection state may remain in common domain/application code.
 - A change for one operating system must not silently alter the other platform's connection flow. Preserve explicit platform-specific tests and add/update tests when changing either adapter.

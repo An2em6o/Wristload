@@ -21,6 +21,11 @@ analyzer:
     # desktop_drop 是随仓库固定版本的第三方插件；应用侧 API 使用与原生
     # Windows 扩展会由测试和实际 Windows 构建共同校验。
     - plugins/desktop_drop/**
+    - build/**
+    - android/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   # The lint rules applied to this project can be customized in the
